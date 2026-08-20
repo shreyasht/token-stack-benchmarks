@@ -44,7 +44,10 @@ docker compose run --rm \
         set -euo pipefail
         git clone --depth 50 "$REPO_URL" /workspace/repo
         cd /workspace/repo
-        claude -p "$(cat /tmp/task-prompt.txt)" > "/results/${TASK_ID}.log" 2>&1
+        claude -p "$(cat /tmp/task-prompt.txt)" --dangerously-skip-permissions > "/results/${TASK_ID}.log" 2>&1
+        # If a permission prompt still blocks here despite the flag above,
+        # known issue on non-interactive first runs — see
+        # anthropics/claude-code#52506. Fallback: --permission-mode bypassPermissions
     '
 
 echo "done: results/${TASK_ID}.log"
