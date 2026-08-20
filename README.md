@@ -40,8 +40,6 @@ docker.sock mount keeps the blast radius to one throwaway container per task.
 ## Setup
 
 **0. Get this repo onto the instance** — `git clone`/`scp`/`rsync`, your call.
-`.env` is gitignored, so the API key won't travel with a `git clone`; set it
-directly on the instance in step 3.
 
 **1. Launch/size the EC2 instance.** Gradle/maven builds on the Java-track
 repos (jackson-databind, logstash, mockito) are the resource-heavy part —
@@ -69,10 +67,24 @@ real run — if there isn't one, drop the `AGENTSVIEW_ENDPOINT` wiring in
 `./results` volume mount, importing into Agentsview from the host after each
 batch.
 
-**3. Set your API key:**
+**3. Authenticate Claude Code with your subscription, not an API key.**
+Deliberate choice to avoid per-token spend — accepted tradeoff is hitting
+usage caps mid-batch and resuming later (`scripts/run-task.sh` skips tasks
+that already have a results file, so resuming doesn't re-spend quota on
+finished work).
+
 ```bash
-echo "ANTHROPIC_API_KEY=sk-..." > .env
+sudo dnf install -y nodejs npm   # if not already installed
+sudo npm install -g @anthropic-ai/claude-code@2.1.12   # 2.1.17+ has a login regression, see anthropics/claude-code#20325
+claude login
 ```
+
+Confirmed on this instance: credentials land at `~/.claude/.credentials.json`.
+`docker-compose.yml` mounts that file (read-only) into each task container at
+`/root/.claude/.credentials.json` so ephemeral containers reuse the host's
+login instead of each one needing its own interactive device-flow — that
+only works once this file exists, so run `claude login` before `docker
+compose build`/`run`.
 
 **4. Build the images:**
 ```bash

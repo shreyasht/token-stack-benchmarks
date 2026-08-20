@@ -7,6 +7,13 @@
 # host.docker.internal from inside a container; supported by Docker Engine on
 # Linux (20.10+) the same way it is on Docker Desktop, so this works unchanged
 # on an EC2 instance running plain Docker Engine.
+#
+# Auth: subscription login (`claude login` on the host), not ANTHROPIC_API_KEY —
+# deliberate choice to avoid per-token API spend. That means each ephemeral
+# container needs the host's OAuth credential mounted in, read-only, rather
+# than logging in itself (device-flow login can't run unsupervised per task).
+# Confirmed path on this instance: ~/.claude/.credentials.json.
+# Containers run as root (no USER set in either Dockerfile) so HOME=/root.
 
 services:
   java-track:
@@ -15,11 +22,11 @@ services:
       dockerfile: images/java.Dockerfile
     environment:
       - AGENTSVIEW_ENDPOINT=http://host.docker.internal:8080
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./results:/results
+      - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
     mem_limit: 4g
     cpus: 2
 
@@ -29,10 +36,10 @@ services:
       dockerfile: images/python.Dockerfile
     environment:
       - AGENTSVIEW_ENDPOINT=http://host.docker.internal:8080
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./results:/results
+      - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
     mem_limit: 4g
     cpus: 2

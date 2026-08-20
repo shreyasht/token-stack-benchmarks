@@ -19,6 +19,15 @@ if [[ "$TRACK" != "java" && "$TRACK" != "python" ]]; then
     exit 1
 fi
 
+# Resume-safety: running on subscription auth, not a metered API key, so a
+# batch that hits a usage cap gets picked up again later (e.g. "tomorrow")
+# without re-spending quota on tasks already done. Skip anything already
+# completed instead of re-running it.
+if [[ -f "results/${TASK_ID}.log" ]]; then
+    echo "skip: results/${TASK_ID}.log already exists"
+    exit 0
+fi
+
 PROMPT="$(cat "$PROMPT_FILE")"
 
 docker compose run --rm "${TRACK}-track" bash -c "
@@ -37,3 +46,6 @@ echo "done: results/${TASK_ID}.log"
 #   suite inside the same container to get pass/fail, per BENCHMARKING.md
 # - capture token/cost/tool-call counts from Agentsview for this session,
 #   tagged with $TASK_ID, instead of just the raw claude log
+# - detect a rate-limit/quota response from `claude -p` (exact error text not
+#   yet verified) and exit the whole batch cleanly instead of letting every
+#   remaining task in the run fail one-by-one against an exhausted quota
