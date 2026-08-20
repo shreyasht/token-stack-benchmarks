@@ -1,12 +1,6 @@
 # Ephemeral benchmark task runners only. Agentsview itself is NOT containerized —
 # it doesn't execute untrusted repo/build code, so there's no isolation reason to.
-# Run it directly on the instance and point these containers at it via
-# host.docker.internal.
-#
-# `extra_hosts: host-gateway` is the Docker Compose mechanism for resolving
-# host.docker.internal from inside a container; supported by Docker Engine on
-# Linux (20.10+) the same way it is on Docker Desktop, so this works unchanged
-# on an EC2 instance running plain Docker Engine.
+# Run it directly on the instance.
 #
 # Auth: subscription login (`claude login` on the host), not ANTHROPIC_API_KEY —
 # deliberate choice to avoid per-token API spend. That means each ephemeral
@@ -18,20 +12,28 @@
 # this instance) rather than root: `claude --dangerously-skip-permissions`
 # refuses to run as root, and non-interactive `-p` mode has no human present
 # to approve permission prompts otherwise. HOME=/home/bench inside the
-# container, hence the mount target below.
+# container, hence the mount targets below.
+#
+# Agentsview integration: NOT an HTTP endpoint — verified against upstream
+# README, it works by watching local session-transcript directories
+# (~/.claude/projects/ for Claude Code) and has no push/ingest API at all.
+# The AGENTSVIEW_ENDPOINT env var from earlier did nothing; removed. Real
+# fix: mount ~/.claude/projects writable (not read-only, unlike the
+# credential file) so each container's session transcripts land where the
+# host's Agentsview file-watcher can actually see them. Heads up: task
+# containers using the same WORKDIR (/workspace) may get grouped under the
+# same "project" key by Claude Code's own directory-hashing — check the
+# Agentsview UI after a real batch to confirm sessions aren't colliding.
 
 services:
   java-track:
     build:
       context: .
       dockerfile: images/java.Dockerfile
-    environment:
-      - AGENTSVIEW_ENDPOINT=http://host.docker.internal:8080
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./results:/results
       - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
+      - ${HOME}/.claude/projects:/home/bench/.claude/projects
     mem_limit: 4g
     cpus: 2
 
@@ -39,12 +41,9 @@ services:
     build:
       context: .
       dockerfile: images/python.Dockerfile
-    environment:
-      - AGENTSVIEW_ENDPOINT=http://host.docker.internal:8080
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
     volumes:
       - ./results:/results
       - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
+      - ${HOME}/.claude/projects:/home/bench/.claude/projects
     mem_limit: 4g
     cpus: 2

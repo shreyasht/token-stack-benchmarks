@@ -57,8 +57,13 @@ echo "done: results/${TASK_ID}.log"
 #   SWE-bench-Verified dataset files instead of a manually supplied prompt file
 # - after the agent run, apply the task's test patch and run the repo's test
 #   suite inside the same container to get pass/fail, per BENCHMARKING.md
-# - capture token/cost/tool-call counts from Agentsview for this session,
-#   tagged with $TASK_ID, instead of just the raw claude log
+# - Agentsview has no push API (confirmed — it's a local file-watcher over
+#   ~/.claude/projects/, not an endpoint); token/cost/tool-call counts for
+#   this run are queryable there automatically now that the projects dir is
+#   mounted (see docker-compose.yml), but there's no built-in way to tie a
+#   specific Agentsview session back to $TASK_ID — figure out a tagging
+#   scheme (session ID captured post-run? cwd-based naming?) before relying
+#   on this for per-task numbers in a real batch
 # - detect a rate-limit/quota response from `claude -p` (exact error text not
 #   yet verified) and exit the whole batch cleanly instead of letting every
 #   remaining task in the run fail one-by-one against an exhausted quota
