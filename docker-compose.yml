@@ -13,7 +13,12 @@
 # container needs the host's OAuth credential mounted in, read-only, rather
 # than logging in itself (device-flow login can't run unsupervised per task).
 # Confirmed path on this instance: ~/.claude/.credentials.json.
-# Containers run as root (no USER set in either Dockerfile) so HOME=/root.
+#
+# Containers run as a non-root user (bench, UID 1000 — matches ec2-user on
+# this instance) rather than root: `claude --dangerously-skip-permissions`
+# refuses to run as root, and non-interactive `-p` mode has no human present
+# to approve permission prompts otherwise. HOME=/home/bench inside the
+# container, hence the mount target below.
 
 services:
   java-track:
@@ -26,7 +31,7 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./results:/results
-      - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
+      - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
     mem_limit: 4g
     cpus: 2
 
@@ -40,6 +45,6 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - ./results:/results
-      - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
+      - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
     mem_limit: 4g
     cpus: 2
