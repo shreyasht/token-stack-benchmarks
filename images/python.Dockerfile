@@ -20,10 +20,18 @@ RUN pip install graphifyy headroom-ai
 # because `claude --dangerously-skip-permissions` refuses to run as root, and
 # the mounted OAuth credential file (~/.claude/.credentials.json, host mode
 # 600) needs a matching numeric UID to stay readable without loosening its
-# permissions.
-RUN useradd -m -u 1000 -s /bin/bash bench \
+# permissions. Some base images already have UID 1000 taken (confirmed true
+# for java.Dockerfile's eclipse-temurin base) — handle both cases the same
+# way here for consistency even though python:3.12-slim doesn't hit it.
+RUN if getent passwd 1000 >/dev/null; then \
+        existing="$(getent passwd 1000 | cut -d: -f1)"; \
+        usermod -l bench -d /home/bench -m -s /bin/bash "$existing"; \
+        groupmod -n bench "$existing" 2>/dev/null || true; \
+    else \
+        useradd -m -u 1000 -s /bin/bash bench; \
+    fi \
     && mkdir -p /workspace \
-    && chown -R bench:bench /workspace
+    && chown -R bench:bench /workspace /home/bench
 
 USER bench
 WORKDIR /workspace
