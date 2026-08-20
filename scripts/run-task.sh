@@ -28,14 +28,24 @@ if [[ -f "results/${TASK_ID}.log" ]]; then
     exit 0
 fi
 
-PROMPT="$(cat "$PROMPT_FILE")"
-
-docker compose run --rm "${TRACK}-track" bash -c "
-    set -euo pipefail
-    git clone --depth 50 '$REPO_URL' /workspace/repo
-    cd /workspace/repo
-    claude -p '$PROMPT' > /results/${TASK_ID}.log 2>&1
-"
+# Prompt content is real-world GitHub issue text — will contain apostrophes,
+# quotes, backticks, $ signs. Never string-interpolate it into a shell
+# command (that broke on the first real issue tried: an apostrophe closed
+# the quoting early). Mount it as a file instead and let the container's own
+# shell read it via `cat`, so nothing about its content ever touches how the
+# script itself is parsed. Same treatment for REPO_URL/TASK_ID via -e, even
+# though they're lower-risk, so no variable is ever substituted into script
+# text.
+docker compose run --rm \
+    -e REPO_URL="$REPO_URL" \
+    -e TASK_ID="$TASK_ID" \
+    -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
+    "${TRACK}-track" bash -c '
+        set -euo pipefail
+        git clone --depth 50 "$REPO_URL" /workspace/repo
+        cd /workspace/repo
+        claude -p "$(cat /tmp/task-prompt.txt)" > "/results/${TASK_ID}.log" 2>&1
+    '
 
 echo "done: results/${TASK_ID}.log"
 
