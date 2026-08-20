@@ -1,0 +1,38 @@
+# Ephemeral benchmark task runners only. Agentsview itself is NOT containerized —
+# it doesn't execute untrusted repo/build code, so there's no isolation reason to.
+# Run it directly on the instance and point these containers at it via
+# host.docker.internal.
+#
+# `extra_hosts: host-gateway` is the Docker Compose mechanism for resolving
+# host.docker.internal from inside a container; supported by Docker Engine on
+# Linux (20.10+) the same way it is on Docker Desktop, so this works unchanged
+# on an EC2 instance running plain Docker Engine.
+
+services:
+  java-track:
+    build:
+      context: .
+      dockerfile: images/java.Dockerfile
+    environment:
+      - AGENTSVIEW_ENDPOINT=http://host.docker.internal:8080
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./results:/results
+    mem_limit: 4g
+    cpus: 2
+
+  python-track:
+    build:
+      context: .
+      dockerfile: images/python.Dockerfile
+    environment:
+      - AGENTSVIEW_ENDPOINT=http://host.docker.internal:8080
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./results:/results
+    mem_limit: 4g
+    cpus: 2

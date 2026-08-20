@@ -1,0 +1,4 @@
+results/*.log
+results/*.json
+!results/.gitkeep
+.env
