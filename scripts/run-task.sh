@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Minimal skeleton for running one benchmark task in an ephemeral container.
-# This is a starting point, not a finished harness — it does not yet parse
-# Multi-SWE-bench / SWE-bench-Verified task JSON, apply the task's test patch,
-# or score pass/fail. See TODOs below and the open items in
-# token-optimization-stack/BENCHMARKING.md.
+# This is a starting point, not a finished harness — it does not yet load a
+# task's row from tasks/tasks.json (see scripts/pull-tasks.py), apply the
+# task's test patch, or score pass/fail. See TODOs below and the open items
+# in token-optimization-stack/BENCHMARKING.md.
 #
 # Usage: scripts/run-task.sh <java|python> <repo-url> <task-id> <prompt-file>
 
@@ -53,8 +53,10 @@ docker compose run --rm \
 echo "done: results/${TASK_ID}.log"
 
 # TODO before real runs:
-# - pull task prompt + gold patch + test patch from the actual Multi-SWE-bench /
-#   SWE-bench-Verified dataset files instead of a manually supplied prompt file
+# - tasks/tasks.json is now populated (scripts/pull-tasks.py) with real
+#   problem_statement/patch/test_patch/FAIL_TO_PASS/PASS_TO_PASS per task —
+#   this script still takes a hand-supplied prompt file instead of loading
+#   task_id's row from tasks.json. Wire that up.
 # - after the agent run, apply the task's test patch and run the repo's test
 #   suite inside the same container to get pass/fail, per BENCHMARKING.md
 # - Agentsview has no push API (confirmed — it's a local file-watcher over

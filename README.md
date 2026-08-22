@@ -81,9 +81,10 @@ claude login
 
 Confirmed on this instance: credentials land at `~/.claude/.credentials.json`.
 `docker-compose.yml` mounts that file (read-only) into each task container at
-`/root/.claude/.credentials.json` so ephemeral containers reuse the host's
-login instead of each one needing its own interactive device-flow — that
-only works once this file exists, so run `claude login` before `docker
+`/home/bench/.claude/.credentials.json` (containers run as non-root user
+`bench`, UID 1000 — see the Dockerfiles) so ephemeral containers reuse the
+host's login instead of each one needing its own interactive device-flow —
+that only works once this file exists, so run `claude login` before `docker
 compose build`/`run`.
 
 **4. Build the images:**
@@ -94,6 +95,27 @@ Compose file syntax is validated (`docker-compose config` parses it cleanly on
 Docker Compose v2.40.3) — whichever binary your AMI ships, the file itself is
 fine.
 
+## Task sample
+
+`tasks/tasks.json` is generated, not hand-written — regenerate with:
+```bash
+pip install pandas pyarrow requests
+python3 scripts/pull-tasks.py   # --seed 42 --min-per-repo 20 by default
+```
+Pulls from `princeton-nlp/SWE-bench_Verified` (Python, official `difficulty`
+field) and `ByteDance-Seed/Multi-SWE-bench` (Java, patch-size-tertile proxy
+difficulty — no official field there, see script header). Java instances are
+quality-gated (f2p tests must actually pass after the fix — Multi-SWE-bench,
+unlike SWE-bench Verified, isn't pre-filtered to that standard) before
+sampling. Current committed file: 231 tasks (180 python / 51 java), seed 42.
+Several repos have fewer than 20 eligible instances after gating (e.g.
+`pallets/flask`: 1, `mwaskom/seaborn`: 2) — the script takes all of them and
+logs a warning rather than padding the sample.
+
+Regenerating with a different `--seed` changes the sample — only do that
+deliberately and commit the new file, since `BENCHMARKING.md` requires a
+fixed, reproducible task list.
+
 ## Running a task
 
 ```bash
@@ -101,10 +123,9 @@ scripts/run-task.sh java https://github.com/FasterXML/jackson-databind <task-id>
 ```
 
 This is a skeleton, not a finished harness — see the TODOs at the bottom of
-`scripts/run-task.sh`. It does not yet pull real task prompts/patches from the
-Multi-SWE-bench or SWE-bench-Verified dataset files, apply test patches, or
-score pass/fail. `tasks/tasks.json` is an empty placeholder for the same
-reason — populating it from the real dataset files is still an open item.
+`scripts/run-task.sh`. It does not yet load a task's prompt/patch from
+`tasks/tasks.json` (still takes a hand-supplied prompt file), apply test
+patches, or score pass/fail.
 
 ## Status
 
