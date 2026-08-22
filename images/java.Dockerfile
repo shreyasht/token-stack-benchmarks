@@ -16,7 +16,12 @@ RUN npm install -g @anthropic-ai/claude-code
 # spreadsheet/memory-stack deps irrelevant to this benchmark and multi-GB by
 # itself. Base already includes tree-sitter/ast-grep-cli/tiktoken — the
 # AST-aware code compression the doc's savings claim rests on.
-RUN pip install --break-system-packages graphifyy headroom-ai
+# mcp: headroom's own `headroom mcp serve` (registered by `headroom init claude`
+# as a stdio MCP server) hard-requires the `mcp` SDK and isn't pulled in by the
+# base package — without it the registered command crashes on spawn
+# (ImportError: MCP SDK not installed) and wedges claude -p startup, which
+# then surfaces ~3 minutes later as a misleading "Connection refused" API error.
+RUN pip install --break-system-packages graphifyy headroom-ai mcp
 
 # Non-root user, UID matching the host (ec2-user, confirmed 1000) — required
 # because `claude --dangerously-skip-permissions` refuses to run as root, and
