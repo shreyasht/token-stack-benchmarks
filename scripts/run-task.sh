@@ -162,11 +162,19 @@ cd "$REPO_ROOT"
 # commit reuses most of the previous extraction instead of rebuilding it.
 # Not shared across different tasks in the same repo — different commits,
 # not verified safe to reuse blindly.
+#
+# Mounted at /home/bench/.graphify-cache (pre-created and bench-owned in
+# the image — see the Dockerfiles), NOT at /workspace/repo/graphify-out
+# directly: that path doesn't exist in the image (run-task.sh's own
+# container script creates /workspace/repo fresh every run), so Docker
+# auto-created it as root to satisfy the bind mount before the container's
+# git init ever ran — which broke git init with a permission error. The
+# container script below symlinks graphify-out to this mount instead.
 DOCKER_EXTRA_ARGS=()
 if [[ "$ARM_INDEX" -ge 1 ]]; then
     GRAPH_CACHE_DIR="$REPO_ROOT/graph-cache/$(tr '/' '_' <<<"$REPO")__${BASE_COMMIT}"
     mkdir -p "$GRAPH_CACHE_DIR"
-    DOCKER_EXTRA_ARGS+=(-v "$GRAPH_CACHE_DIR:/workspace/repo/graphify-out")
+    DOCKER_EXTRA_ARGS+=(-v "$GRAPH_CACHE_DIR:/home/bench/.graphify-cache")
 fi
 
 set +e
@@ -204,7 +212,7 @@ docker compose run --rm \
         # below. graphify-out/ is the extracted knowledge graph (can be
         # large); harmless no-ops for arms that never create these paths.
         {
-            echo "graphify-out/"
+            echo "graphify-out"
             echo ".claude/"
             echo "CLAUDE.md"
         } >> .git/info/exclude
@@ -222,9 +230,16 @@ docker compose run --rm \
             # until a `graphify query` runs, via a PreToolUse hook — a hard
             # gate, not just the system-prompt nudge below.
             graphify install --project --strict --platform claude
+            # graphify-out symlinked to the host-mounted cache
+            # (/home/bench/.graphify-cache — see run-task.sh'"'"'s comment
+            # above the docker compose invocation for why it'"'"'s not
+            # mounted directly at this path) so `graphify extract`'"'"'s
+            # default output location transparently persists across
+            # exact-commit repeats of this task.
+            ln -s /home/bench/.graphify-cache graphify-out
             # Deterministic pre-build, not left for the agent to discover
-            # mid-session (that'"'"'s what inflated turns/cost the first time
-            # this arm ran — the graph didn'"'"'t exist yet). --code-only
+            # mid-session (that inflated turns/cost the first time this arm
+            # ran for real — the graph didn'"'"'t exist yet). --code-only
             # --no-cluster: local tree-sitter AST only, no LLM calls, so
             # this step has no hidden token/quota cost of its own.
             graphify extract . --code-only --no-cluster
