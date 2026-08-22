@@ -22,7 +22,9 @@
 # end on a real Docker host: astropy__astropy-12907 ran clean through
 # run_evaluation and reported resolved.
 #
-# Usage: scripts/score-python-batch.sh [task_id ...]   # default: every attempted python task
+# Usage: scripts/score-python-batch.sh [--arm <name>] [task_id ...]   # default: baseline arm, every attempted python task
+# --arm selects which ablation arm's results/<arm>/ dir to score — see
+# scripts/run-task.sh's header for the arm list. Defaults to baseline.
 # Requires: pip install swebench, jq, Docker
 
 set -euo pipefail
@@ -30,8 +32,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
-RESULTS_DIR="$REPO_ROOT/results"
 DATASET_NAME="SWE-bench/SWE-bench_Verified"   # NOT princeton-nlp — that mirror lacks the "image" field the harness now requires
+
+ARM="baseline"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --arm) ARM="$2"; shift 2 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]}"
+
+RESULTS_DIR="$REPO_ROOT/results/$ARM"
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
@@ -80,7 +93,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
 done
 
 if [[ ${#SCORED_IDS[@]} -eq 0 ]]; then
-    echo "no attempted python-track tasks found under results/ — run scripts/run-batch.sh --track python first" >&2
+    echo "no attempted python-track tasks found under results/$ARM/ — run scripts/run-batch.sh --track python --arm $ARM first" >&2
     exit 1
 fi
 
@@ -90,7 +103,7 @@ RUN_ID="score-$(date +%Y%m%d-%H%M%S)"
 REPORT_DIR="$RESULTS_DIR/python-scores"
 mkdir -p "$REPORT_DIR"
 
-echo "scoring ${#SCORED_IDS[@]} task(s) against $DATASET_NAME, run_id=$RUN_ID"
+echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM) against $DATASET_NAME, run_id=$RUN_ID"
 
 python3 -m swebench.harness.run_evaluation \
     --dataset_name "$DATASET_NAME" \

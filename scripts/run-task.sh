@@ -7,13 +7,30 @@
 # real swebench / multi-swe-bench harnesses instead of reimplementing their
 # per-repo build/test logic.
 #
-# Usage: scripts/run-task.sh <task-id> [tasks-file]
+# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>]
 # Requires: jq
+#
+# --arm selects which ablation arm to run, per BENCHMARKING.md's ablation
+# design. Cumulative — each arm includes every tool before it:
+#   baseline  — nothing wired in (plain claude -p)
+#   graphify  — + graphify install, agent nudged via system prompt
+#   serena    — + Serena registered as an MCP server, agent nudged
+#   headroom  — + Headroom registered (transparent, no nudge needed)
+#   leanctx   — + LeanCTX registered via `lean-ctx onboard` (transparent)
+#   caveman   — + Caveman installed as a Claude Code plugin (its own
+#               SessionStart hook activates it — no /caveman typing needed,
+#               same mechanism observed live in the authoring session)
+# LiteLLM (arm 7 in BENCHMARKING.md) is intentionally not wired here: its
+# documented "usage-based-routing-v2" strategy load-balances, it doesn't
+# route by task complexity, and Claude Code sends one fixed model for a
+# whole -p session — wiring it in as literally documented wouldn't measure
+# real routing savings. Revisit once there's an actual per-subtask
+# model-switch mechanism to test.
 #
 # Exit codes (matter to scripts/run-batch.sh):
 #   0  task ran, agent completed without error (correctness unscored here)
 #   1  task ran but failed (agent error, crash, or bad checkout) — batch should continue
-#   2  bad input (unknown task_id, missing tasks file) — not a task failure
+#   2  bad input (unknown task_id, missing tasks file, bad --arm) — not a task failure
 #   3  rate-limit / usage-quota hit — batch should STOP, not burn through the rest
 
 set -euo pipefail
@@ -22,7 +39,29 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
-TASKS_FILE="${2:-$REPO_ROOT/tasks/tasks.json}"
+shift
+
+ARM="baseline"
+TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --arm) ARM="$2"; shift 2 ;;
+        *) TASKS_FILE="$1"; shift ;;
+    esac
+done
+
+case "$ARM" in
+    baseline) ARM_INDEX=0 ;;
+    graphify) ARM_INDEX=1 ;;
+    serena)   ARM_INDEX=2 ;;
+    headroom) ARM_INDEX=3 ;;
+    leanctx)  ARM_INDEX=4 ;;
+    caveman)  ARM_INDEX=5 ;;
+    *)
+        echo "unknown --arm '$ARM' (want: baseline|graphify|serena|headroom|leanctx|caveman)" >&2
+        exit 2
+        ;;
+esac
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
@@ -34,14 +73,18 @@ if [[ ! -f "$TASKS_FILE" ]]; then
     exit 2
 fi
 
+RESULTS_DIR="$REPO_ROOT/results/$ARM"
+
 # Resume-safety: running on subscription auth, not a metered API key, so a
 # batch that hits a usage cap gets picked up again later (e.g. "tomorrow")
 # without re-spending quota on tasks already done. Skip anything already
 # attempted instead of re-running it — result.json existing means the
 # container ran to completion (success or agent-side failure both write it;
 # only a crash before claude produced output leaves it missing, see below).
-if [[ -f "$REPO_ROOT/results/${TASK_ID}.result.json" ]]; then
-    echo "skip: results/${TASK_ID}.result.json already exists"
+# Scoped per-arm so the same task_id can be (re-)run under a different arm
+# without the skip check hiding it.
+if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]]; then
+    echo "skip: results/$ARM/${TASK_ID}.result.json already exists"
     exit 0
 fi
 
@@ -88,7 +131,7 @@ PROMPT_FILE="$(mktemp)"
 trap 'rm -f "$PROMPT_FILE"' EXIT
 jq -r '.problem_statement' <<<"$TASK_JSON" > "$PROMPT_FILE"
 
-mkdir -p "$REPO_ROOT/results"
+mkdir -p "$RESULTS_DIR"
 
 # docker compose reads docker-compose.yml relative to cwd (for the ./results
 # volume mount), so run from the repo root regardless of caller's cwd.
@@ -100,9 +143,16 @@ docker compose run --rm \
     -e TASK_ID="$TASK_ID" \
     -e BASE_COMMIT="$BASE_COMMIT" \
     -e SESSION_ID="$SESSION_ID" \
+    -e ARM="$ARM" \
+    -e ARM_INDEX="$ARM_INDEX" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
     "${TRACK}-track" bash -c '
         set -euo pipefail
+        # docker-compose.yml mounts the whole host results/ dir at /results
+        # — write under the arm subdir within it rather than remounting a
+        # different host path, so this composes with that one static mount.
+        mkdir -p "/results/$ARM"
+
         # Shallow fetch by exact commit SHA rather than a depth-limited
         # branch clone — guarantees the checked-out tree matches the task'"'"'s
         # base_commit exactly (verified: GitHub allows fetching an arbitrary
@@ -114,6 +164,49 @@ docker compose run --rm \
         git fetch --depth 1 origin "$BASE_COMMIT"
         git checkout -q FETCH_HEAD
 
+        # Ablation-arm wiring: each block below registers one more tool with
+        # Claude Code, cumulative on $ARM_INDEX. Kept as registration steps
+        # (MCP add / plugin install / onboard), never a wrapping launcher
+        # (e.g. `headroom wrap claude`), so the actual process invoked below
+        # is always literally `claude -p --output-format json --session-id
+        # ...` regardless of arm — one less variable between arms.
+        SYSTEM_PROMPT=""
+        if [[ "$ARM_INDEX" -ge 1 ]]; then
+            graphify install
+            SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
+        fi
+        if [[ "$ARM_INDEX" -ge 2 ]]; then
+            claude mcp add --scope local serena -- serena start-mcp-server --context claude-code --project /workspace/repo
+            SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
+        fi
+        if [[ "$ARM_INDEX" -ge 3 ]]; then
+            # TODO NOT VERIFIED: exact Headroom registration subcommand.
+            # Confirm with `headroom --help` on the real EC2 install before
+            # trusting this arm — swap for the correct subcommand once known.
+            headroom mcp install --client claude-code --project /workspace/repo
+        fi
+        if [[ "$ARM_INDEX" -ge 4 ]]; then
+            # TODO NOT VERIFIED: exact lean-ctx onboarding flags for a
+            # non-interactive/scripted run. Confirm with `lean-ctx onboard
+            # --help` on the real EC2 install before trusting this arm.
+            lean-ctx onboard --tool claude --yes
+        fi
+        if [[ "$ARM_INDEX" -ge 5 ]]; then
+            # TODO NOT VERIFIED: exact non-interactive flag for `claude
+            # plugin install`. Confirm with `claude plugin install --help`
+            # on the real EC2 install before trusting this arm.
+            claude plugin marketplace add JuliusBrussee/caveman
+            claude plugin install caveman@caveman --yes
+        fi
+
+        # Array, not a bare ${SYSTEM_PROMPT:+...} expansion — the latter
+        # word-splits on the spaces inside $SYSTEM_PROMPT and leaks literal
+        # quote characters into argv once past parameter expansion.
+        CLAUDE_EXTRA_ARGS=()
+        if [[ -n "$SYSTEM_PROMPT" ]]; then
+            CLAUDE_EXTRA_ARGS=(--append-system-prompt "$SYSTEM_PROMPT")
+        fi
+
         # claude itself is allowed to fail/error here (set +e-equivalent via
         # ||true) — a bad run still needs its JSON result captured (for the
         # is_error/api_error_status check on the host below) and whatever
@@ -123,7 +216,8 @@ docker compose run --rm \
             --session-id "$SESSION_ID" \
             --output-format json \
             --dangerously-skip-permissions \
-            > "/results/${TASK_ID}.result.json" 2> "/results/${TASK_ID}.stderr.log" || true
+            "${CLAUDE_EXTRA_ARGS[@]}" \
+            > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
         # If a permission prompt still blocks here despite the flag above,
         # known issue on non-interactive first runs — see
         # anthropics/claude-code#52506. Fallback: --permission-mode bypassPermissions
@@ -134,27 +228,27 @@ docker compose run --rm \
         # files entirely, which would have dropped exactly the kind of thing
         # the pilot-3 run actually did (added a new test file).
         git add -A
-        git diff --cached > "/results/${TASK_ID}.patch" || true
+        git diff --cached > "/results/$ARM/${TASK_ID}.patch" || true
     '
 DOCKER_EXIT=$?
 set -e
 
-RESULT_JSON="$REPO_ROOT/results/${TASK_ID}.result.json"
+RESULT_JSON="$RESULTS_DIR/${TASK_ID}.result.json"
 
 if [[ ! -f "$RESULT_JSON" ]]; then
-    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or claude likely crashed before producing output; see results/${TASK_ID}.stderr.log if present" >&2
+    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or claude likely crashed before producing output; see results/$ARM/${TASK_ID}.stderr.log if present" >&2
     exit 1
 fi
 
 if ! jq -e . "$RESULT_JSON" >/dev/null 2>&1; then
-    echo "result.json is not valid JSON — claude likely crashed mid-output; see results/${TASK_ID}.stderr.log" >&2
+    echo "result.json is not valid JSON — claude likely crashed mid-output; see results/$ARM/${TASK_ID}.stderr.log" >&2
     exit 1
 fi
 
 jq -n --arg task_id "$TASK_ID" --arg session_id "$SESSION_ID" --arg track "$TRACK" \
-      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" \
-      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit}' \
-      >> "$REPO_ROOT/results/session-map.jsonl"
+      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" \
+      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm}' \
+      >> "$RESULTS_DIR/session-map.jsonl"
 
 IS_ERROR="$(jq -r '.is_error' "$RESULT_JSON")"
 API_ERROR_STATUS="$(jq -r '.api_error_status // empty' "$RESULT_JSON")"
@@ -177,7 +271,7 @@ if [[ "$IS_ERROR" == "true" ]]; then
     exit 1
 fi
 
-echo "done: results/${TASK_ID}.result.json (patch: results/${TASK_ID}.patch, session: $SESSION_ID)"
+echo "done: results/$ARM/${TASK_ID}.result.json (patch: results/$ARM/${TASK_ID}.patch, session: $SESSION_ID)"
 
 # TODO before real runs:
 # - scoring (test_patch application + pass/fail) is handled by

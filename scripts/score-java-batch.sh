@@ -24,7 +24,9 @@
 # run_evaluation --mode evaluation and produced a final_report.json
 # (unresolved — correct outcome for that patch, not a script bug).
 #
-# Usage: scripts/score-java-batch.sh [task_id ...]   # default: every attempted java task
+# Usage: scripts/score-java-batch.sh [--arm <name>] [task_id ...]   # default: baseline arm, every attempted java task
+# --arm selects which ablation arm's results/<arm>/ dir to score — see
+# scripts/run-task.sh's header for the arm list. Defaults to baseline.
 # Requires: multi-swe-bench (not on PyPI — git clone + `make install` from
 # https://github.com/multi-swe-bench/multi-swe-bench), jq, Docker
 
@@ -33,8 +35,19 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
-RESULTS_DIR="$REPO_ROOT/results"
 RAW_DATASET_DIR="$REPO_ROOT/tasks/raw/multi-swe-bench-java"
+
+ARM="baseline"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --arm) ARM="$2"; shift 2 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]}"
+
+RESULTS_DIR="$REPO_ROOT/results/$ARM"
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
@@ -93,7 +106,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
 done
 
 if [[ ${#SCORED_IDS[@]} -eq 0 ]]; then
-    echo "no attempted java-track tasks found under results/ — run scripts/run-batch.sh --track java first" >&2
+    echo "no attempted java-track tasks found under results/$ARM/ — run scripts/run-batch.sh --track java --arm $ARM first" >&2
     exit 1
 fi
 
@@ -102,7 +115,7 @@ OUTPUT_DIR="$RESULTS_DIR/java-scores"
 LOG_DIR="$RESULTS_DIR/java-scores-logs"
 mkdir -p "$REPO_DIR" "$OUTPUT_DIR" "$LOG_DIR"
 
-echo "scoring ${#SCORED_IDS[@]} task(s) against tasks/raw/multi-swe-bench-java/*.jsonl"
+echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM) against tasks/raw/multi-swe-bench-java/*.jsonl"
 
 python3 -m multi_swe_bench.harness.run_evaluation \
     --mode evaluation \

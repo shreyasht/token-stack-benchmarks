@@ -6,8 +6,11 @@
 # (exit 1) don't stop the batch — one broken checkout or one bad agent run
 # shouldn't cost you the rest of the sample.
 #
-# Usage: scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N]
+# Usage: scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N] [--arm <name>]
 # Requires: jq
+# --arm forwarded as-is to scripts/run-task.sh — see that script's header for
+# the arm list (baseline|graphify|serena|headroom|leanctx|caveman). Defaults
+# to baseline there if omitted.
 
 set -euo pipefail
 
@@ -18,12 +21,14 @@ TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 TRACK_FILTER=""
 REPO_FILTER=""
 LIMIT=""
+ARM="baseline"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --track) TRACK_FILTER="$2"; shift 2 ;;
         --repo) REPO_FILTER="$2"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
+        --arm) ARM="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
@@ -49,7 +54,7 @@ if [[ -n "$LIMIT" ]]; then
     TASK_IDS=("${TASK_IDS[@]:0:$LIMIT}")
 fi
 
-echo "batch: ${#TASK_IDS[@]} task(s) selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none})"
+echo "batch: ${#TASK_IDS[@]} task(s) selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none} arm=$ARM)"
 
 DONE=0
 SKIPPED=0
@@ -62,7 +67,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
     # real (possibly hours-long) batch, while OUTPUT captures it to tell a
     # resume-skip apart from a fresh completion for the summary counts below.
     set +e
-    OUTPUT="$("$SCRIPT_DIR/run-task.sh" "$TASK_ID" 2>&1 | tee /dev/stderr)"
+    OUTPUT="$("$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" 2>&1 | tee /dev/stderr)"
     RC=${PIPESTATUS[0]}
     set -e
 

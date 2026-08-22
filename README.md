@@ -129,7 +129,7 @@ records (build/env metadata), not just the flat fields kept in `tasks.json`.
 Requires `jq` on the host (`sudo dnf install -y jq` / `apt-get install -y jq`).
 
 ```bash
-scripts/run-task.sh <task-id>
+scripts/run-task.sh <task-id> [--arm baseline|graphify|serena|headroom|leanctx|caveman]
 ```
 
 `<task-id>` is a `task_id` from `tasks/tasks.json` (e.g.
@@ -138,14 +138,45 @@ repo, base commit, and problem statement itself; no other arguments needed.
 It shallow-fetches the repo at the task's exact `base_commit` (by SHA, not a
 branch) so the checked-out tree matches what the task's patches assume, then
 runs the agent via `claude -p --output-format json --session-id <generated>`
-and captures:
-- `results/<task-id>.result.json` — the run's own JSON summary (cost, token
-  usage, `is_error`, `api_error_status`, the session ID)
-- `results/<task-id>.patch` — the agent's actual code changes (`git diff`
+and captures, under `results/<arm>/` (default arm: `baseline`):
+- `results/<arm>/<task-id>.result.json` — the run's own JSON summary (cost,
+  token usage, `is_error`, `api_error_status`, the session ID)
+- `results/<arm>/<task-id>.patch` — the agent's actual code changes (`git diff`
   after `git add -A`, so new files it created are included, not just edits
   to existing ones)
-- an appended line in `results/session-map.jsonl` tying `task_id` to the
-  Agentsview session ID for that run
+- an appended line in `results/<arm>/session-map.jsonl` tying `task_id` (and
+  `arm`) to the Agentsview session ID for that run
+
+### Ablation arms
+
+`--arm` selects which stack tools are wired into that run, cumulative, per
+`BENCHMARKING.md`'s ablation design: `baseline` (nothing) → `graphify` →
+`serena` → `headroom` → `leanctx` → `caveman` (everything through Caveman).
+Each arm registers one more tool with Claude Code inside the container before
+invoking it (`claude mcp add` for Serena, `claude plugin install` for
+Caveman, etc. — see `scripts/run-task.sh`'s header for the exact mechanism
+per tool); Graphify and Serena additionally get a system-prompt nudge to
+actually use them, matching `TOKEN_OPTIMIZATION_STACK.md`'s own "Agent
+Instructions" section. Running the same task_id under a different arm does
+not skip — the resume check is scoped per arm.
+
+**LiteLLM (arm 7 in BENCHMARKING.md) is intentionally not wired in.** Its
+documented `usage-based-routing-v2` config is a load-balancing strategy, not
+complexity-based routing, and Claude Code sends one fixed model for a whole
+`-p` session — wiring the proxy in as literally documented wouldn't measure
+real per-task routing savings. Revisit once there's an actual per-subtask
+model-switch mechanism to test.
+
+**Headroom / LeanCTX / Caveman registration commands are NOT VERIFIED** —
+written from each tool's public docs, not confirmed against the real
+installed CLI. Before trusting those arms, run `headroom --help`, `lean-ctx
+onboard --help`, and `claude plugin install --help` on the actual EC2 install
+and fix `scripts/run-task.sh`'s TODOs if the real subcommands differ.
+
+Compare token/cost counts across arms for one task_id:
+```bash
+scripts/compare-arms.sh <task-id>
+```
 
 Exit codes matter if you're scripting around this directly: `0` ran fine,
 `1` the task failed (bad checkout, agent error, crash) but that's not fatal
@@ -165,12 +196,14 @@ Scoring below.
 ## Running a batch
 
 ```bash
-scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N]
+scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N] [--arm <name>]
 ```
 
 Runs `scripts/run-task.sh` over every matching `task_id` in
-`tasks/tasks.json`, skipping ones with an existing `results/<task_id>.result.json`
-(resume-safe, same reasoning as run-task.sh's own skip check). Stops the
+`tasks/tasks.json`, skipping ones with an existing
+`results/<arm>/<task_id>.result.json` (resume-safe, same reasoning as
+run-task.sh's own skip check). `--arm` is forwarded as-is (default
+`baseline`) — see "Ablation arms" above. Stops the
 whole batch immediately on a rate-limit/quota hit (exit `3`); an ordinary
 task failure (exit `1`) doesn't stop the batch, it's just counted. Prints a
 `done=/failed=/skipped=` summary and the list of failed task_ids at the end.
@@ -188,13 +221,16 @@ patch, run the real test suite, and report resolved/unresolved against
 
 ```bash
 pip install swebench
-scripts/score-python-batch.sh          # every attempted python task, or pass specific task_ids
+scripts/score-python-batch.sh [--arm <name>]         # every attempted python task, or pass specific task_ids
 
 git clone git@github.com:multi-swe-bench/multi-swe-bench.git /tmp/multi-swe-bench && (cd /tmp/multi-swe-bench && make install)  # not on PyPI, source-only
-scripts/score-java-batch.sh            # every attempted java task, or pass specific task_ids
+scripts/score-java-batch.sh [--arm <name>]           # every attempted java task, or pass specific task_ids
 ```
 
-Both read each attempted task's `results/<task_id>.patch` and hand it to the
+Both default to scoring `results/baseline/` — pass `--arm <name>` to score a
+different arm's results (see "Ablation arms" above).
+
+Both read each attempted task's `results/<arm>/<task_id>.patch` and hand it to the
 harness in its own expected format — CLI flags and predictions/patch-file
 schemas were confirmed by reading each package's installed source directly
 (see the scripts' headers), not guessed from docs. **Both verified end to
@@ -210,8 +246,19 @@ Neither track has run a full batch yet.
 
 Infrastructure scaffold, task sampling, task running, and scoring wiring are
 all in place and confirmed working end to end for both tracks (one task_id
-each, real Docker host, real verdicts). No full batch run yet (the pilot in
-`results/README.md` predates the scoring harness and was checked informally
-against a reference PR instead). Once a real batch runs — agent + scoring
-both — results get written up in `token-optimization-stack/BENCHMARKING.md`,
-not here.
+each, real Docker host, real verdicts). Ablation-arm wiring (`--arm`) is
+written but not yet run live — Headroom/LeanCTX/Caveman's exact registration
+subcommands need confirming against the real EC2 install first (see
+"Ablation arms" above). No full batch run yet (the pilot in `results/README.md`
+predates the scoring harness and was checked informally against a reference
+PR instead). Once a real batch runs — agent + scoring both — results get
+written up in `token-optimization-stack/BENCHMARKING.md`, not here.
+
+If you have pre-existing results from before `--arm` support (a flat
+`results/<task_id>.result.json` instead of `results/<arm>/<task_id>.result.json`),
+they were run with nothing wired in — move them into the `baseline` arm
+before running anything new:
+```bash
+mkdir -p results/baseline
+mv results/*.result.json results/*.patch results/session-map.jsonl results/baseline/ 2>/dev/null
+```
