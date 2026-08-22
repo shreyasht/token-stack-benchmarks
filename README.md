@@ -153,12 +153,23 @@ and captures, under `results/<arm>/` (default arm: `baseline`):
 `BENCHMARKING.md`'s ablation design: `baseline` (nothing) → `graphify` →
 `serena` → `headroom` → `leanctx` → `caveman` (everything through Caveman).
 Each arm registers one more tool with Claude Code inside the container before
-invoking it (`claude mcp add` for Serena, `claude plugin install` for
-Caveman, etc. — see `scripts/run-task.sh`'s header for the exact mechanism
-per tool); Graphify and Serena additionally get a system-prompt nudge to
-actually use them, matching `TOKEN_OPTIMIZATION_STACK.md`'s own "Agent
-Instructions" section. Running the same task_id under a different arm does
-not skip — the resume check is scoped per arm.
+invoking it — `claude mcp add` for Serena, `headroom init claude` for
+Headroom, `lean-ctx onboard` for LeanCTX (see `scripts/run-task.sh`'s header
+for the exact mechanism per tool, all confirmed live against the real
+installed CLIs on EC2, not guessed from docs); Graphify and Serena
+additionally get a system-prompt nudge to actually use them, matching
+`TOKEN_OPTIMIZATION_STACK.md`'s own "Agent Instructions" section. Running
+the same task_id under a different arm does not skip — the resume check is
+scoped per arm.
+
+**Caveman is enabled by default in every container, not off by default.**
+Its `install.sh` registers it as a Claude Code plugin at image build time
+(contrary to what its docs claimed) — `claude plugin list` shows it
+`enabled` before any arm-specific setup runs. So the `baseline` through
+`leanctx` arms explicitly `claude plugin disable caveman`; the `caveman` arm
+does nothing extra, since it's already on. This was caught live, not assumed
+— worth remembering if this repo's tool set changes and a new tool turns out
+to auto-activate at build time the same way.
 
 **LiteLLM (arm 7 in BENCHMARKING.md) is intentionally not wired in.** Its
 documented `usage-based-routing-v2` config is a load-balancing strategy, not
@@ -166,12 +177,6 @@ complexity-based routing, and Claude Code sends one fixed model for a whole
 `-p` session — wiring the proxy in as literally documented wouldn't measure
 real per-task routing savings. Revisit once there's an actual per-subtask
 model-switch mechanism to test.
-
-**Headroom / LeanCTX / Caveman registration commands are NOT VERIFIED** —
-written from each tool's public docs, not confirmed against the real
-installed CLI. Before trusting those arms, run `headroom --help`, `lean-ctx
-onboard --help`, and `claude plugin install --help` on the actual EC2 install
-and fix `scripts/run-task.sh`'s TODOs if the real subcommands differ.
 
 Compare token/cost counts across arms for one task_id:
 ```bash
@@ -246,13 +251,13 @@ Neither track has run a full batch yet.
 
 Infrastructure scaffold, task sampling, task running, and scoring wiring are
 all in place and confirmed working end to end for both tracks (one task_id
-each, real Docker host, real verdicts). Ablation-arm wiring (`--arm`) is
-written but not yet run live — Headroom/LeanCTX/Caveman's exact registration
-subcommands need confirming against the real EC2 install first (see
-"Ablation arms" above). No full batch run yet (the pilot in `results/README.md`
-predates the scoring harness and was checked informally against a reference
-PR instead). Once a real batch runs — agent + scoring both — results get
-written up in `token-optimization-stack/BENCHMARKING.md`, not here.
+each, real Docker host, real verdicts). Ablation-arm registration commands
+are confirmed live against the real EC2 install (see "Ablation arms" above)
+but no arm has actually been run end to end yet — that's the next step. No
+full batch run yet (the pilot in `results/README.md` predates the scoring
+harness and was checked informally against a reference PR instead). Once a
+real batch runs — agent + scoring both — results get written up in
+`token-optimization-stack/BENCHMARKING.md`, not here.
 
 If you have pre-existing results from before `--arm` support (a flat
 `results/<task_id>.result.json` instead of `results/<arm>/<task_id>.result.json`),

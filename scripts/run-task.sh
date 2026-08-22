@@ -12,14 +12,22 @@
 #
 # --arm selects which ablation arm to run, per BENCHMARKING.md's ablation
 # design. Cumulative — each arm includes every tool before it:
-#   baseline  — nothing wired in (plain claude -p)
+#   baseline  — nothing wired in (plain claude -p); caveman explicitly
+#               disabled (see below — it's on by default in the image)
 #   graphify  — + graphify install, agent nudged via system prompt
 #   serena    — + Serena registered as an MCP server, agent nudged
-#   headroom  — + Headroom registered (transparent, no nudge needed)
-#   leanctx   — + LeanCTX registered via `lean-ctx onboard` (transparent)
-#   caveman   — + Caveman installed as a Claude Code plugin (its own
-#               SessionStart hook activates it — no /caveman typing needed,
-#               same mechanism observed live in the authoring session)
+#   headroom  — + `headroom init claude` (durable hooks + provider routing)
+#   leanctx   — + `lean-ctx onboard` (auto-detects/registers Claude Code)
+#   caveman   — + Caveman enabled (it's baked into the image at build time
+#               and enabled by default — VERIFIED live via `claude plugin
+#               list` — so arms below caveman must explicitly disable it,
+#               not the other way around)
+# All registration commands above except graphify/serena were confirmed
+# live against the real installed CLIs on EC2 (`--help` output), not guessed
+# from docs — docs turned out wrong about caveman's install mechanism (it
+# registers as a plugin itself, the docs said it wouldn't) and about
+# lean-ctx onboard's flags (no --tool/--yes; it just auto-detects).
+#
 # LiteLLM (arm 7 in BENCHMARKING.md) is intentionally not wired here: its
 # documented "usage-based-routing-v2" strategy load-balances, it doesn't
 # route by task complexity, and Claude Code sends one fixed model for a
@@ -180,23 +188,30 @@ docker compose run --rm \
             SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
         fi
         if [[ "$ARM_INDEX" -ge 3 ]]; then
-            # TODO NOT VERIFIED: exact Headroom registration subcommand.
-            # Confirm with `headroom --help` on the real EC2 install before
-            # trusting this arm — swap for the correct subcommand once known.
-            headroom mcp install --client claude-code --project /workspace/repo
+            # VERIFIED on real EC2 install (`headroom init claude --help`):
+            # takes no flags, installs durable hooks + provider routing —
+            # matches "works transparently once installed", no separate
+            # `headroom proxy` process or ANTHROPIC_BASE_URL wiring needed
+            # here (the alternate `headroom mcp install` on-demand path is
+            # not used).
+            headroom init claude
         fi
         if [[ "$ARM_INDEX" -ge 4 ]]; then
-            # TODO NOT VERIFIED: exact lean-ctx onboarding flags for a
-            # non-interactive/scripted run. Confirm with `lean-ctx onboard
-            # --help` on the real EC2 install before trusting this arm.
-            lean-ctx onboard --tool claude --yes
+            # VERIFIED on real EC2 install (`lean-ctx onboard --help`): no
+            # --tool/--yes flags exist, it auto-detects installed agents.
+            lean-ctx onboard
         fi
-        if [[ "$ARM_INDEX" -ge 5 ]]; then
-            # TODO NOT VERIFIED: exact non-interactive flag for `claude
-            # plugin install`. Confirm with `claude plugin install --help`
-            # on the real EC2 install before trusting this arm.
-            claude plugin marketplace add JuliusBrussee/caveman
-            claude plugin install caveman@caveman --yes
+
+        # Caveman is baked into the image at build time (its install.sh
+        # registers the plugin itself, contrary to its docs) and is enabled
+        # by default in every fresh container regardless of arm — VERIFIED
+        # live: `claude plugin list` showed caveman@caveman already
+        # "enabled" before this block ever ran. So every arm below caveman
+        # must explicitly disable it, or arms 0–4 are silently contaminated
+        # with its output-compression hook. Already enabled for the caveman
+        # arm itself by default — nothing to do there.
+        if [[ "$ARM_INDEX" -lt 5 ]]; then
+            claude plugin disable caveman || true
         fi
 
         # Array, not a bare ${SYSTEM_PROMPT:+...} expansion — the latter
