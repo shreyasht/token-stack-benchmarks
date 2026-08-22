@@ -324,9 +324,11 @@ $SYSTEM_PROMPT"
                 > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
                 
             # Sync the generated transcripts back to the host so Agentsview can see them.
-            # We copy them to the mounted /results-agy/transcripts directory.
+            # We copy them to the mounted /results-agy/transcripts directory for archiving,
+            # and to the host's native brain directory so Agentsview instantly picks them up.
             mkdir -p "$MOUNT_DIR/transcripts"
             cp -r /tmp/agy_home/.gemini/antigravity-cli/brain/* "$MOUNT_DIR/transcripts/" 2>/dev/null || true
+            cp -r /tmp/agy_home/.gemini/antigravity-cli/brain/* "/tmp/host_agy_brain/" 2>/dev/null || true
         fi
         # If a permission prompt still blocks here despite the flag above,
         # known issue on non-interactive first runs — see
