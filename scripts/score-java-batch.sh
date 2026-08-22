@@ -86,7 +86,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
         PATCH_FILE="$EMPTY_PATCH"
     fi
 
-    jq -n --arg org "$ORG" --arg repo "$REPO_SHORT" --argjson number "$NUMBER" \
+    jq -nc --arg org "$ORG" --arg repo "$REPO_SHORT" --argjson number "$NUMBER" \
           --rawfile fix_patch "$PATCH_FILE" \
           '{org: $org, repo: $repo, number: $number, fix_patch: $fix_patch}' \
           >> "$PATCH_JSONL"
