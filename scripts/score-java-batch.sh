@@ -19,11 +19,10 @@
 #
 # VERIFIED: CLI flags, Patch schema, and PR-number scoping below were
 # confirmed by reading the installed multi-swe-bench package source
-# directly, not guessed from docs.
-# NOT VERIFIED: actually building+running its per-instance Docker images end
-# to end — needs a real Docker host with real disk/network (this was
-# written without one available). Try one task_id before trusting a full
-# batch.
+# directly, not guessed from docs. Also verified end-to-end on a real
+# Docker host: alibaba__fastjson2-1245 ran clean through
+# run_evaluation --mode evaluation and produced a final_report.json
+# (unresolved — correct outcome for that patch, not a script bug).
 #
 # Usage: scripts/score-java-batch.sh [task_id ...]   # default: every attempted java task
 # Requires: multi-swe-bench (not on PyPI — git clone + `make install` from

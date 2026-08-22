@@ -197,16 +197,19 @@ scripts/score-java-batch.sh            # every attempted java task, or pass spec
 Both read each attempted task's `results/<task_id>.patch` and hand it to the
 harness in its own expected format — CLI flags and predictions/patch-file
 schemas were confirmed by reading each package's installed source directly
-(see the scripts' headers), not guessed from docs. **Neither has been run
-end to end**: building and running per-instance Docker images needs a real
-Docker host with real disk/network, which wasn't available while writing
-these. Try one task_id before trusting a full batch.
+(see the scripts' headers), not guessed from docs. **Java verified end to
+end** on a real Docker host: `scripts/score-java-batch.sh
+alibaba__fastjson2-1245` ran clean through `multi_swe_bench.harness.run_evaluation`
+and produced a `final_report.json` (unresolved — a real verdict, not a
+crash). **Python not yet run** — try one task_id before trusting a full
+batch.
 
 ## Status
 
 Infrastructure scaffold, task sampling, task running, and scoring wiring are
-all in place; no scored benchmark batch has been run yet (the pilot in
-`results/README.md` predates the scoring harness and was checked informally
-against a reference PR instead). Once a real batch runs — agent + scoring
-both — results get written up in `token-optimization-stack/BENCHMARKING.md`,
-not here.
+all in place. Java scoring path is confirmed working end to end (one
+task_id, unresolved verdict); python scoring path and any full batch run
+are still pending (the pilot in `results/README.md` predates the scoring
+harness and was checked informally against a reference PR instead). Once a
+real batch runs — agent + scoring both — results get written up in
+`token-optimization-stack/BENCHMARKING.md`, not here.
