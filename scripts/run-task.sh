@@ -246,11 +246,7 @@ docker compose run --rm \
         # is always literally `claude -p --output-format json --session-id
         # ...` regardless of arm — one less variable between arms.
         SYSTEM_PROMPT=""
-        if [[ "$ARM_INDEX" -ge 1 ]]; then
-            # --project --strict (needs --project — VERIFIED via `graphify
-            # install --help`) blocks the first raw file read per session
-            # until a `graphify query` runs, via a PreToolUse hook — a hard
-            # gate, not just the system-prompt nudge below.
+
         if [[ "$AGENT" == "claude" ]]; then
             if [[ "$ARM_INDEX" -ge 1 ]]; then
                 graphify install --project --strict --platform claude
