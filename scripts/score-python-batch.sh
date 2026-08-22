@@ -34,7 +34,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 RESULTS_DIR="$REPO_ROOT/results"
-DATASET_NAME="princeton-nlp/SWE-bench_Verified"
+DATASET_NAME="SWE-bench/SWE-bench_Verified"   # NOT princeton-nlp — that mirror lacks the "image" field the harness now requires
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
