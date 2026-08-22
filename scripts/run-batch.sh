@@ -9,8 +9,8 @@
 # Usage: scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N] [--arm <name>]
 # Requires: jq
 # --arm forwarded as-is to scripts/run-task.sh — see that script's header for
-# the arm list (baseline|graphify|serena|headroom|leanctx|caveman). Defaults
-# to baseline there if omitted.
+# the arm list (baseline|graphify|serena|leanctx|caveman). Defaults to
+# baseline there if omitted.
 
 set -euo pipefail
 

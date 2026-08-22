@@ -22,7 +22,7 @@ if ! command -v jq >/dev/null; then
 fi
 
 # Same arm list/order as scripts/run-task.sh's --arm values, cumulative.
-ARMS=(baseline graphify serena headroom leanctx caveman)
+ARMS=(baseline graphify serena leanctx caveman)
 
 FOUND=0
 ROWS=()

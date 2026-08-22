@@ -25,7 +25,6 @@
 #               `extract` is incremental by default — VERIFIED via
 #               `graphify extract --help`).
 #   serena    — + Serena registered as an MCP server, agent nudged
-#   headroom  — + `headroom init claude` (durable hooks + provider routing)
 #   leanctx   — + `lean-ctx onboard` (auto-detects/registers Claude Code)
 #   caveman   — + Caveman enabled (it's baked into the image at build time
 #               and enabled by default — VERIFIED live via `claude plugin
@@ -37,12 +36,21 @@
 # registers as a plugin itself, the docs said it wouldn't) and about
 # lean-ctx onboard's flags (no --tool/--yes; it just auto-detects).
 #
-# LiteLLM (arm 7 in BENCHMARKING.md) is intentionally not wired here: its
-# documented "usage-based-routing-v2" strategy load-balances, it doesn't
-# route by task complexity, and Claude Code sends one fixed model for a
-# whole -p session — wiring it in as literally documented wouldn't measure
-# real routing savings. Revisit once there's an actual per-subtask
-# model-switch mechanism to test.
+# Headroom and LiteLLM are dropped from the stack entirely (not deferred —
+# removed from TOKEN_OPTIMIZATION_STACK.md too). Headroom's only usable
+# registration path (`headroom init claude`, chosen to avoid stacking a
+# separate `wrap`/`proxy` launcher around this invocation) turned out to
+# register an on-demand MCP tool the agent may never call, not the
+# transparent compression the doc claimed (confirmed via `headroom doctor`:
+# nothing is actually routed without a running `headroom proxy` +
+# ANTHROPIC_BASE_URL). Its `mcp serve` subcommand also crashed outright
+# against a plain `pip install headroom-ai` (needs the `[mcp]` extra, pinned
+# `mcp<2` — headroom's own code still uses the v1 SDK's `@server.list_tools()`
+# decorator, which mcp 2.0.0 removed). LiteLLM's documented
+# "usage-based-routing-v2" strategy load-balances, it doesn't route by task
+# complexity, and Claude Code sends one fixed model for a whole -p session —
+# wiring it in as literally documented wouldn't measure real routing savings.
+# Both added complexity disproportionate to what they measurably deliver.
 #
 # Exit codes (matter to scripts/run-batch.sh):
 #   0  task ran, agent completed without error (correctness unscored here)
@@ -71,11 +79,10 @@ case "$ARM" in
     baseline) ARM_INDEX=0 ;;
     graphify) ARM_INDEX=1 ;;
     serena)   ARM_INDEX=2 ;;
-    headroom) ARM_INDEX=3 ;;
-    leanctx)  ARM_INDEX=4 ;;
-    caveman)  ARM_INDEX=5 ;;
+    leanctx)  ARM_INDEX=3 ;;
+    caveman)  ARM_INDEX=4 ;;
     *)
-        echo "unknown --arm '$ARM' (want: baseline|graphify|serena|headroom|leanctx|caveman)" >&2
+        echo "unknown --arm '$ARM' (want: baseline|graphify|serena|leanctx|caveman)" >&2
         exit 2
         ;;
 esac
@@ -220,7 +227,7 @@ docker compose run --rm \
         # Ablation-arm wiring: each block below registers one more tool with
         # Claude Code, cumulative on $ARM_INDEX. Kept as registration steps
         # (MCP add / plugin install / onboard), never a wrapping launcher
-        # (e.g. `headroom wrap claude`), so the actual process invoked below
+        # (e.g. `lean-ctx wrap claude`), so the actual process invoked below
         # is always literally `claude -p --output-format json --session-id
         # ...` regardless of arm — one less variable between arms.
         SYSTEM_PROMPT=""
@@ -250,15 +257,6 @@ docker compose run --rm \
             SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
         fi
         if [[ "$ARM_INDEX" -ge 3 ]]; then
-            # VERIFIED on real EC2 install (`headroom init claude --help`):
-            # takes no flags, installs durable hooks + provider routing —
-            # matches "works transparently once installed", no separate
-            # `headroom proxy` process or ANTHROPIC_BASE_URL wiring needed
-            # here (the alternate `headroom mcp install` on-demand path is
-            # not used).
-            headroom init claude
-        fi
-        if [[ "$ARM_INDEX" -ge 4 ]]; then
             # VERIFIED on real EC2 install (`lean-ctx onboard --help`): no
             # --tool/--yes flags exist, it auto-detects installed agents.
             lean-ctx onboard
@@ -269,10 +267,10 @@ docker compose run --rm \
         # by default in every fresh container regardless of arm — VERIFIED
         # live: `claude plugin list` showed caveman@caveman already
         # "enabled" before this block ever ran. So every arm below caveman
-        # must explicitly disable it, or arms 0–4 are silently contaminated
+        # must explicitly disable it, or lower arms are silently contaminated
         # with its output-compression hook. Already enabled for the caveman
         # arm itself by default — nothing to do there.
-        if [[ "$ARM_INDEX" -lt 5 ]]; then
+        if [[ "$ARM_INDEX" -lt 4 ]]; then
             claude plugin disable caveman || true
         fi
 

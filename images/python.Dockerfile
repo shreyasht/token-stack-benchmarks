@@ -10,20 +10,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Claude Code CLI (verified real package) — system-wide as root, fine, always on PATH.
 RUN npm install -g @anthropic-ai/claude-code
 
-# graphifyy/headroom-ai — system-wide as root, same reasoning. python:3.12-slim's
-# pip isn't PEP-668-restricted (that only applies to distro-packaged pip, not
-# the official Python image's own), so no --break-system-packages needed here.
-# headroom-ai: base package only, no extras — see java.Dockerfile for why.
-# mcp: headroom's own `headroom mcp serve` (registered by `headroom init claude`
-# as a stdio MCP server) hard-requires the `mcp` SDK and isn't pulled in by the
-# base package — without it the registered command crashes on spawn
-# (ImportError: MCP SDK not installed) and wedges claude -p startup, which
-# then surfaces ~3 minutes later as a misleading "Connection refused" API error.
-# [mcp] extra — headroom-ai's own pyproject.toml labels this "MCP server for
-# Claude Code integration": mcp>=1.28.1,<2.0.0 (capped below the 2.x rewrite
-# that dropped the v1 @server.list_tools() decorator API headroom still uses —
-# GH #2658/#2977) plus httpx/starlette/uvicorn the server needs at runtime.
-RUN pip install graphifyy 'headroom-ai[mcp]'
+# graphifyy — system-wide as root, same reasoning. python:3.12-slim's pip
+# isn't PEP-668-restricted (that only applies to distro-packaged pip, not the
+# official Python image's own), so no --break-system-packages needed here.
+RUN pip install graphifyy
 
 # Non-root user, UID matching the host (ec2-user, confirmed 1000) — required
 # because `claude --dangerously-skip-permissions` refuses to run as root, and

@@ -129,7 +129,7 @@ records (build/env metadata), not just the flat fields kept in `tasks.json`.
 Requires `jq` on the host (`sudo dnf install -y jq` / `apt-get install -y jq`).
 
 ```bash
-scripts/run-task.sh <task-id> [--arm baseline|graphify|serena|headroom|leanctx|caveman]
+scripts/run-task.sh <task-id> [--arm baseline|graphify|serena|leanctx|caveman]
 ```
 
 `<task-id>` is a `task_id` from `tasks/tasks.json` (e.g.
@@ -151,16 +151,15 @@ and captures, under `results/<arm>/` (default arm: `baseline`):
 
 `--arm` selects which stack tools are wired into that run, cumulative, per
 `BENCHMARKING.md`'s ablation design: `baseline` (nothing) → `graphify` →
-`serena` → `headroom` → `leanctx` → `caveman` (everything through Caveman).
+`serena` → `leanctx` → `caveman` (everything through Caveman).
 Each arm registers one more tool with Claude Code inside the container before
-invoking it — `claude mcp add` for Serena, `headroom init claude` for
-Headroom, `lean-ctx onboard` for LeanCTX (see `scripts/run-task.sh`'s header
-for the exact mechanism per tool, all confirmed live against the real
-installed CLIs on EC2, not guessed from docs); Graphify and Serena
-additionally get a system-prompt nudge to actually use them, matching
-`TOKEN_OPTIMIZATION_STACK.md`'s own "Agent Instructions" section. Running
-the same task_id under a different arm does not skip — the resume check is
-scoped per arm.
+invoking it — `claude mcp add` for Serena, `lean-ctx onboard` for LeanCTX
+(see `scripts/run-task.sh`'s header for the exact mechanism per tool, all
+confirmed live against the real installed CLIs on EC2, not guessed from
+docs); Graphify and Serena additionally get a system-prompt nudge to
+actually use them, matching `TOKEN_OPTIMIZATION_STACK.md`'s own "Agent
+Instructions" section. Running the same task_id under a different arm does
+not skip — the resume check is scoped per arm.
 
 **Caveman is enabled by default in every container, not off by default.**
 Its `install.sh` registers it as a Claude Code plugin at image build time
@@ -171,12 +170,21 @@ does nothing extra, since it's already on. This was caught live, not assumed
 — worth remembering if this repo's tool set changes and a new tool turns out
 to auto-activate at build time the same way.
 
-**LiteLLM (arm 7 in BENCHMARKING.md) is intentionally not wired in.** Its
-documented `usage-based-routing-v2` config is a load-balancing strategy, not
+**Headroom and LiteLLM are not arms here** — both were dropped from the
+stack entirely (see `token-optimization-stack/TOKEN_OPTIMIZATION_STACK.md`
+and `BENCHMARKING.md`), not just deferred. Headroom's only usable
+registration path (`headroom init claude`, chosen over `wrap`/`proxy` to
+avoid stacking a launcher around this invocation) turned out to register an
+on-demand MCP tool the agent may never call, not the transparent
+compression the doc claimed (`headroom doctor` confirmed nothing is
+actually routed without a separately running `headroom proxy` +
+`ANTHROPIC_BASE_URL`), and its `mcp serve` subcommand crashed outright
+against a current `mcp` SDK install. LiteLLM's documented
+`usage-based-routing-v2` config is a load-balancing strategy, not
 complexity-based routing, and Claude Code sends one fixed model for a whole
 `-p` session — wiring the proxy in as literally documented wouldn't measure
-real per-task routing savings. Revisit once there's an actual per-subtask
-model-switch mechanism to test.
+real per-task routing savings. Both added complexity disproportionate to
+what they measurably deliver for this stack.
 
 **Graphify's graph is built deterministically before the agent starts**,
 not left for the agent to discover mid-session — `graphify install --project
