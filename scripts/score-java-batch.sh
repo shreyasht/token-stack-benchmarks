@@ -26,7 +26,8 @@
 # batch.
 #
 # Usage: scripts/score-java-batch.sh [task_id ...]   # default: every attempted java task
-# Requires: pip install multi-swe-bench, jq, Docker
+# Requires: multi-swe-bench (not on PyPI — git clone + `make install` from
+# https://github.com/multi-swe-bench/multi-swe-bench), jq, Docker
 
 set -euo pipefail
 
@@ -41,7 +42,7 @@ if ! command -v jq >/dev/null; then
     exit 1
 fi
 if ! python3 -c "import multi_swe_bench" 2>/dev/null; then
-    echo "multi-swe-bench not installed — run: pip install multi-swe-bench" >&2
+    echo "multi-swe-bench not installed — not on PyPI, run: git clone git@github.com:multi-swe-bench/multi-swe-bench.git && cd multi-swe-bench && make install" >&2
     exit 1
 fi
 if [[ ! -d "$RAW_DATASET_DIR" ]] || [[ -z "$(ls -A "$RAW_DATASET_DIR" 2>/dev/null)" ]]; then
@@ -99,7 +100,8 @@ fi
 
 REPO_DIR="$WORK_DIR/repos"
 OUTPUT_DIR="$RESULTS_DIR/java-scores"
-mkdir -p "$REPO_DIR" "$OUTPUT_DIR"
+LOG_DIR="$RESULTS_DIR/java-scores-logs"
+mkdir -p "$REPO_DIR" "$OUTPUT_DIR" "$LOG_DIR"
 
 echo "scoring ${#SCORED_IDS[@]} task(s) against tasks/raw/multi-swe-bench-java/*.jsonl"
 
@@ -109,6 +111,7 @@ python3 -m multi_swe_bench.harness.run_evaluation \
     --patch_files "$PATCH_JSONL" \
     --dataset_files "$RAW_DATASET_DIR"/*.jsonl \
     --repo_dir "$REPO_DIR" \
-    --output_dir "$OUTPUT_DIR"
+    --output_dir "$OUTPUT_DIR" \
+    --log_dir "$LOG_DIR"
 
 echo "done — report under $OUTPUT_DIR"

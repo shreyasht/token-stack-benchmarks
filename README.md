@@ -190,7 +190,7 @@ patch, run the real test suite, and report resolved/unresolved against
 pip install swebench
 scripts/score-python-batch.sh          # every attempted python task, or pass specific task_ids
 
-pip install multi-swe-bench
+git clone git@github.com:multi-swe-bench/multi-swe-bench.git /tmp/multi-swe-bench && (cd /tmp/multi-swe-bench && make install)  # not on PyPI, source-only
 scripts/score-java-batch.sh            # every attempted java task, or pass specific task_ids
 ```
 
