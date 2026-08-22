@@ -290,7 +290,7 @@ docker compose run --rm \
             fi
             if [[ "$ARM_INDEX" -ge 2 ]]; then
                 # agy does not have a local scope add command in the same way, assume global or manually write config
-                agy config mcp add serena "serena start-mcp-server --context agy --project /workspace/repo" || true
+                agy mcp add serena "serena start-mcp-server --context agy --project /workspace/repo" || true
                 SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
             fi
             if [[ "$ARM_INDEX" -ge 3 ]]; then
@@ -302,11 +302,18 @@ docker compose run --rm \
             # Caveman uses system prompts in agy, assume not enabled unless we add it
             
             AGY_EXTRA_ARGS=()
+            
+            FULL_PROMPT="$(cat /tmp/task-prompt.txt)"
             if [[ -n "$SYSTEM_PROMPT" ]]; then
-                AGY_EXTRA_ARGS=(--prompt "$SYSTEM_PROMPT")
+                FULL_PROMPT="$FULL_PROMPT
+
+System Instructions:
+$SYSTEM_PROMPT"
             fi
             
-            agy --goal "$(cat /tmp/task-prompt.txt)" \
+            agy -p "$FULL_PROMPT" \
+                --output-format json \
+                --dangerously-skip-permissions \
                 "${AGY_EXTRA_ARGS[@]}" \
                 > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
         fi
