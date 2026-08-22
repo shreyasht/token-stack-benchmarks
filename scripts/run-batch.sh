@@ -22,6 +22,7 @@ TRACK_FILTER=""
 REPO_FILTER=""
 LIMIT=""
 ARM="baseline"
+AGENT="claude"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -29,6 +30,7 @@ while [[ $# -gt 0 ]]; do
         --repo) REPO_FILTER="$2"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
         --arm) ARM="$2"; shift 2 ;;
+        --agent) AGENT="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
@@ -54,7 +56,7 @@ if [[ -n "$LIMIT" ]]; then
     TASK_IDS=("${TASK_IDS[@]:0:$LIMIT}")
 fi
 
-echo "batch: ${#TASK_IDS[@]} task(s) selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none} arm=$ARM)"
+echo "batch: ${#TASK_IDS[@]} task(s) selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none} arm=$ARM agent=$AGENT)"
 
 DONE=0
 SKIPPED=0
@@ -67,7 +69,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
     # real (possibly hours-long) batch, while OUTPUT captures it to tell a
     # resume-skip apart from a fresh completion for the summary counts below.
     set +e
-    OUTPUT="$("$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" 2>&1 | tee /dev/stderr)"
+    OUTPUT="$("$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" --agent "$AGENT" 2>&1 | tee /dev/stderr)"
     RC=${PIPESTATUS[0]}
     set -e
 

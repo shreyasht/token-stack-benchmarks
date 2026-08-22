@@ -59,13 +59,20 @@ TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
 shift
 
 ARM="baseline"
+AGENT="claude"
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
+        --agent) AGENT="$2"; shift 2 ;;
         *) TASKS_FILE="$1"; shift ;;
     esac
 done
+
+if [[ "$AGENT" != "claude" && "$AGENT" != "agy" ]]; then
+    echo "unknown --agent '$AGENT' (want: claude|agy)" >&2
+    exit 2
+fi
 
 case "$ARM" in
     baseline) ARM_INDEX=0 ;;
@@ -185,6 +192,7 @@ docker compose run --rm \
     -e SESSION_ID="$SESSION_ID" \
     -e ARM="$ARM" \
     -e ARM_INDEX="$ARM_INDEX" \
+    -e AGENT="$AGENT" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
     "${DOCKER_EXTRA_ARGS[@]}" \
     "${TRACK}-track" bash -c '
@@ -229,72 +237,69 @@ docker compose run --rm \
             # install --help`) blocks the first raw file read per session
             # until a `graphify query` runs, via a PreToolUse hook — a hard
             # gate, not just the system-prompt nudge below.
-            graphify install --project --strict --platform claude
-            # graphify-out symlinked to the host-mounted cache
-            # (/home/bench/.graphify-cache — see run-task.sh'"'"'s comment
-            # above the docker compose invocation for why it'"'"'s not
-            # mounted directly at this path) so `graphify extract`'"'"'s
-            # default output location transparently persists across
-            # exact-commit repeats of this task.
-            ln -s /home/bench/.graphify-cache graphify-out
-            # Deterministic pre-build, not left for the agent to discover
-            # mid-session (that inflated turns/cost the first time this arm
-            # ran for real — the graph didn'"'"'t exist yet). --code-only
-            # --no-cluster: local tree-sitter AST only, no LLM calls, so
-            # this step has no hidden token/quota cost of its own.
-            graphify extract . --code-only --no-cluster
-            SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
+        if [[ "$AGENT" == "claude" ]]; then
+            if [[ "$ARM_INDEX" -ge 1 ]]; then
+                graphify install --project --strict --platform claude
+                ln -s /home/bench/.graphify-cache graphify-out
+                graphify extract . --code-only --no-cluster
+                SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
+            fi
+            if [[ "$ARM_INDEX" -ge 2 ]]; then
+                claude mcp add --scope local serena -- serena start-mcp-server --context claude-code --project /workspace/repo
+                SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
+            fi
+            if [[ "$ARM_INDEX" -ge 3 ]]; then
+                headroom init claude
+            fi
+            if [[ "$ARM_INDEX" -ge 4 ]]; then
+                lean-ctx onboard
+            fi
+            if [[ "$ARM_INDEX" -lt 5 ]]; then
+                claude plugin disable caveman || true
+            fi
+            
+            CLAUDE_EXTRA_ARGS=()
+            if [[ -n "$SYSTEM_PROMPT" ]]; then
+                CLAUDE_EXTRA_ARGS=(--append-system-prompt "$SYSTEM_PROMPT")
+            fi
+            
+            claude -p "$(cat /tmp/task-prompt.txt)" \
+                --session-id "$SESSION_ID" \
+                --output-format json \
+                --dangerously-skip-permissions \
+                "${CLAUDE_EXTRA_ARGS[@]}" \
+                > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
+        else
+            # agy branch
+            if [[ "$ARM_INDEX" -ge 1 ]]; then
+                # Assume graphify has an agy platform or just fallback
+                graphify install --project --strict --platform agy || true
+                ln -s /home/bench/.graphify-cache graphify-out
+                graphify extract . --code-only --no-cluster
+                SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
+            fi
+            if [[ "$ARM_INDEX" -ge 2 ]]; then
+                # agy does not have a local scope add command in the same way, assume global or manually write config
+                agy config mcp add serena "serena start-mcp-server --context agy --project /workspace/repo" || true
+                SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
+            fi
+            if [[ "$ARM_INDEX" -ge 3 ]]; then
+                headroom init agy || true
+            fi
+            if [[ "$ARM_INDEX" -ge 4 ]]; then
+                lean-ctx onboard --agent agy || true
+            fi
+            # Caveman uses system prompts in agy, assume not enabled unless we add it
+            
+            AGY_EXTRA_ARGS=()
+            if [[ -n "$SYSTEM_PROMPT" ]]; then
+                AGY_EXTRA_ARGS=(--prompt "$SYSTEM_PROMPT")
+            fi
+            
+            agy --goal "$(cat /tmp/task-prompt.txt)" \
+                "${AGY_EXTRA_ARGS[@]}" \
+                > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
         fi
-        if [[ "$ARM_INDEX" -ge 2 ]]; then
-            claude mcp add --scope local serena -- serena start-mcp-server --context claude-code --project /workspace/repo
-            SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
-        fi
-        if [[ "$ARM_INDEX" -ge 3 ]]; then
-            # VERIFIED on real EC2 install (`headroom init claude --help`):
-            # takes no flags, installs durable hooks + provider routing —
-            # matches "works transparently once installed", no separate
-            # `headroom proxy` process or ANTHROPIC_BASE_URL wiring needed
-            # here (the alternate `headroom mcp install` on-demand path is
-            # not used).
-            headroom init claude
-        fi
-        if [[ "$ARM_INDEX" -ge 4 ]]; then
-            # VERIFIED on real EC2 install (`lean-ctx onboard --help`): no
-            # --tool/--yes flags exist, it auto-detects installed agents.
-            lean-ctx onboard
-        fi
-
-        # Caveman is baked into the image at build time (its install.sh
-        # registers the plugin itself, contrary to its docs) and is enabled
-        # by default in every fresh container regardless of arm — VERIFIED
-        # live: `claude plugin list` showed caveman@caveman already
-        # "enabled" before this block ever ran. So every arm below caveman
-        # must explicitly disable it, or arms 0–4 are silently contaminated
-        # with its output-compression hook. Already enabled for the caveman
-        # arm itself by default — nothing to do there.
-        if [[ "$ARM_INDEX" -lt 5 ]]; then
-            claude plugin disable caveman || true
-        fi
-
-        # Array, not a bare ${SYSTEM_PROMPT:+...} expansion — the latter
-        # word-splits on the spaces inside $SYSTEM_PROMPT and leaks literal
-        # quote characters into argv once past parameter expansion.
-        CLAUDE_EXTRA_ARGS=()
-        if [[ -n "$SYSTEM_PROMPT" ]]; then
-            CLAUDE_EXTRA_ARGS=(--append-system-prompt "$SYSTEM_PROMPT")
-        fi
-
-        # claude itself is allowed to fail/error here (set +e-equivalent via
-        # ||true) — a bad run still needs its JSON result captured (for the
-        # is_error/api_error_status check on the host below) and whatever
-        # diff exists still captured, rather than the whole script aborting
-        # and losing that signal.
-        claude -p "$(cat /tmp/task-prompt.txt)" \
-            --session-id "$SESSION_ID" \
-            --output-format json \
-            --dangerously-skip-permissions \
-            "${CLAUDE_EXTRA_ARGS[@]}" \
-            > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
         # If a permission prompt still blocks here despite the flag above,
         # known issue on non-interactive first runs — see
         # anthropics/claude-code#52506. Fallback: --permission-mode bypassPermissions

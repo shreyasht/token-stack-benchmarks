@@ -16,7 +16,7 @@ RUN npm install -g @anthropic-ai/claude-code
 # spreadsheet/memory-stack deps irrelevant to this benchmark and multi-GB by
 # itself. Base already includes tree-sitter/ast-grep-cli/tiktoken — the
 # AST-aware code compression the doc's savings claim rests on.
-RUN pip install --break-system-packages graphifyy headroom-ai
+RUN pip install --break-system-packages graphifyy headroom-ai antigravity-cli
 
 # Non-root user, UID matching the host (ec2-user, confirmed 1000) — required
 # because `claude --dangerously-skip-permissions` refuses to run as root, and
