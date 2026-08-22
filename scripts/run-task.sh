@@ -14,7 +14,16 @@
 # design. Cumulative — each arm includes every tool before it:
 #   baseline  — nothing wired in (plain claude -p); caveman explicitly
 #               disabled (see below — it's on by default in the image)
-#   graphify  — + graphify install, agent nudged via system prompt
+#   graphify  — + `graphify install --project --strict` (blocks the first
+#               raw file read until a query runs) + a deterministic
+#               `graphify extract . --code-only --no-cluster` pre-build (not
+#               left for the agent to discover mid-session — that inflated
+#               turns/cost the first time this arm ran for real), agent also
+#               nudged via system prompt. Extraction is cached on the host
+#               under graph-cache/<repo>__<base_commit>/, reused only across
+#               exact-commit repeats of the same task (graphify's own
+#               `extract` is incremental by default — VERIFIED via
+#               `graphify extract --help`).
 #   serena    — + Serena registered as an MCP server, agent nudged
 #   headroom  — + `headroom init claude` (durable hooks + provider routing)
 #   leanctx   — + `lean-ctx onboard` (auto-detects/registers Claude Code)
@@ -145,6 +154,21 @@ mkdir -p "$RESULTS_DIR"
 # volume mount), so run from the repo root regardless of caller's cwd.
 cd "$REPO_ROOT"
 
+# Graph cache for graphify (arm >= 1), keyed by (repo, base_commit) — safe
+# to reuse ONLY across exact-commit repeats of the same task_id, since a
+# different base_commit means a different tree. `graphify extract` is
+# incremental by default (verified via `graphify extract --help`: only
+# `--force` bypasses the manifest gate), so a second run against the same
+# commit reuses most of the previous extraction instead of rebuilding it.
+# Not shared across different tasks in the same repo — different commits,
+# not verified safe to reuse blindly.
+DOCKER_EXTRA_ARGS=()
+if [[ "$ARM_INDEX" -ge 1 ]]; then
+    GRAPH_CACHE_DIR="$REPO_ROOT/graph-cache/$(tr '/' '_' <<<"$REPO")__${BASE_COMMIT}"
+    mkdir -p "$GRAPH_CACHE_DIR"
+    DOCKER_EXTRA_ARGS+=(-v "$GRAPH_CACHE_DIR:/workspace/repo/graphify-out")
+fi
+
 set +e
 docker compose run --rm \
     -e REPO_URL="$REPO_URL" \
@@ -154,6 +178,7 @@ docker compose run --rm \
     -e ARM="$ARM" \
     -e ARM_INDEX="$ARM_INDEX" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
+    "${DOCKER_EXTRA_ARGS[@]}" \
     "${TRACK}-track" bash -c '
         set -euo pipefail
         # docker-compose.yml mounts the whole host results/ dir at /results
@@ -172,6 +197,18 @@ docker compose run --rm \
         git fetch --depth 1 origin "$BASE_COMMIT"
         git checkout -q FETCH_HEAD
 
+        # Registration steps below (graphify --project, Serena --scope
+        # local) write into the repo tree itself (CLAUDE.md, .claude/) —
+        # exclude them here, in git'"'"'s own per-checkout exclude file, so
+        # they never get swept into the agent'"'"'s diff by `git add -A`
+        # below. graphify-out/ is the extracted knowledge graph (can be
+        # large); harmless no-ops for arms that never create these paths.
+        {
+            echo "graphify-out/"
+            echo ".claude/"
+            echo "CLAUDE.md"
+        } >> .git/info/exclude
+
         # Ablation-arm wiring: each block below registers one more tool with
         # Claude Code, cumulative on $ARM_INDEX. Kept as registration steps
         # (MCP add / plugin install / onboard), never a wrapping launcher
@@ -180,7 +217,17 @@ docker compose run --rm \
         # ...` regardless of arm — one less variable between arms.
         SYSTEM_PROMPT=""
         if [[ "$ARM_INDEX" -ge 1 ]]; then
-            graphify install
+            # --project --strict (needs --project — VERIFIED via `graphify
+            # install --help`) blocks the first raw file read per session
+            # until a `graphify query` runs, via a PreToolUse hook — a hard
+            # gate, not just the system-prompt nudge below.
+            graphify install --project --strict --platform claude
+            # Deterministic pre-build, not left for the agent to discover
+            # mid-session (that'"'"'s what inflated turns/cost the first time
+            # this arm ran — the graph didn'"'"'t exist yet). --code-only
+            # --no-cluster: local tree-sitter AST only, no LLM calls, so
+            # this step has no hidden token/quota cost of its own.
+            graphify extract . --code-only --no-cluster
             SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
         fi
         if [[ "$ARM_INDEX" -ge 2 ]]; then

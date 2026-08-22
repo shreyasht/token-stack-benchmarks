@@ -178,6 +178,25 @@ complexity-based routing, and Claude Code sends one fixed model for a whole
 real per-task routing savings. Revisit once there's an actual per-subtask
 model-switch mechanism to test.
 
+**Graphify's graph is built deterministically before the agent starts**,
+not left for the agent to discover mid-session — `graphify install --project
+--strict` (blocks the first raw file read until a query runs) followed by
+`graphify extract . --code-only --no-cluster` (local tree-sitter AST only,
+no LLM calls, so this pre-step has no hidden token cost of its own). The
+first live run of this arm skipped the pre-build and just installed the
+skill, which meant the agent burned extra turns building the graph itself
+mid-session instead of querying an existing one — fixed. The extraction is
+cached on the host under `graph-cache/<repo>__<base_commit>/`
+(`graphify extract` is incremental by default), reused only across
+exact-commit repeats of the same task_id — not across different tasks in
+the same repo, since a different `base_commit` means a different tree and
+reuse there isn't verified safe.
+
+`graphify install --project` and Serena's `--scope local` write into the
+repo checkout itself (`CLAUDE.md`, `.claude/`) — excluded via
+`.git/info/exclude` inside the container before the agent runs, so none of
+that benchmark scaffolding leaks into the captured `.patch`.
+
 Compare token/cost counts across arms for one task_id:
 ```bash
 scripts/compare-arms.sh <task-id>

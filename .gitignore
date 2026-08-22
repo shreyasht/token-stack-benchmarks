@@ -5,4 +5,5 @@ results/**/*.patch
 results/**/*-scores/
 !results/.gitkeep
 !results/README.md
+graph-cache/
 .env
