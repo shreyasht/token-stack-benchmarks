@@ -118,14 +118,21 @@ fixed, reproducible task list.
 
 ## Running a task
 
+Requires `jq` on the host (`sudo dnf install -y jq` / `apt-get install -y jq`).
+
 ```bash
-scripts/run-task.sh java https://github.com/FasterXML/jackson-databind <task-id> path/to/prompt.txt
+scripts/run-task.sh <task-id>
 ```
 
-This is a skeleton, not a finished harness — see the TODOs at the bottom of
-`scripts/run-task.sh`. It does not yet load a task's prompt/patch from
-`tasks/tasks.json` (still takes a hand-supplied prompt file), apply test
-patches, or score pass/fail.
+`<task-id>` is a `task_id` from `tasks/tasks.json` (e.g.
+`fasterxml__jackson-databind-1234`) — the script looks up that row's track,
+repo, base commit, and problem statement itself; no other arguments needed.
+It shallow-fetches the repo at the task's exact `base_commit` (by SHA, not a
+branch) so the checked-out tree matches what the task's patches assume.
+
+Still a skeleton, not a finished harness — see the TODOs at the bottom of
+`scripts/run-task.sh`. It does not yet apply the task's `test_patch` or score
+pass/fail against `FAIL_TO_PASS`/`PASS_TO_PASS`.
 
 ## Status
 
