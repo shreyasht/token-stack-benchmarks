@@ -19,9 +19,11 @@ RUN npm install -g @anthropic-ai/claude-code
 # base package — without it the registered command crashes on spawn
 # (ImportError: MCP SDK not installed) and wedges claude -p startup, which
 # then surfaces ~3 minutes later as a misleading "Connection refused" API error.
-# Pinned <2 — headroom-ai 0.36.4's code uses the mcp SDK 1.x `@server.list_tools()`
-# decorator API, which mcp 2.0.0's rewrite removed (AttributeError on spawn).
-RUN pip install graphifyy headroom-ai 'mcp<2'
+# [mcp] extra — headroom-ai's own pyproject.toml labels this "MCP server for
+# Claude Code integration": mcp>=1.28.1,<2.0.0 (capped below the 2.x rewrite
+# that dropped the v1 @server.list_tools() decorator API headroom still uses —
+# GH #2658/#2977) plus httpx/starlette/uvicorn the server needs at runtime.
+RUN pip install graphifyy 'headroom-ai[mcp]'
 
 # Non-root user, UID matching the host (ec2-user, confirmed 1000) — required
 # because `claude --dangerously-skip-permissions` refuses to run as root, and
