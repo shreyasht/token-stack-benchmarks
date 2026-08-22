@@ -14,7 +14,7 @@ RUN npm install -g @anthropic-ai/claude-code
 # pip isn't PEP-668-restricted (that only applies to distro-packaged pip, not
 # the official Python image's own), so no --break-system-packages needed here.
 # headroom-ai: base package only, no extras — see java.Dockerfile for why.
-RUN pip install graphifyy headroom-ai antigravity-cli
+RUN pip install graphifyy headroom-ai
 
 # Non-root user, UID matching the host (ec2-user, confirmed 1000) — required
 # because `claude --dangerously-skip-permissions` refuses to run as root, and

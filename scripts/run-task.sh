@@ -192,6 +192,11 @@ if [[ "$ARM_INDEX" -ge 1 ]]; then
     DOCKER_EXTRA_ARGS+=(-v "$GRAPH_CACHE_DIR:/home/bench/.graphify-cache")
 fi
 
+if [[ "$AGENT" == "agy" ]]; then
+    HOST_AGY_PATH="$(which agy)"
+    DOCKER_EXTRA_ARGS+=(-v "$HOST_AGY_PATH:/usr/local/bin/agy:ro")
+fi
+
 set +e
 docker compose run --rm \
     -e REPO_URL="$REPO_URL" \
