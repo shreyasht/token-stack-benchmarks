@@ -32,6 +32,7 @@ services:
       dockerfile: images/java.Dockerfile
     volumes:
       - ./results:/results
+      - ./results-agy:/results-agy
       - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
       - ${HOME}/.claude/projects:/home/bench/.claude/projects
       - ${HOME}/.gemini/antigravity-cli:/home/bench/.gemini/antigravity-cli
@@ -44,6 +45,7 @@ services:
       dockerfile: images/python.Dockerfile
     volumes:
       - ./results:/results
+      - ./results-agy:/results-agy
       - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
       - ${HOME}/.claude/projects:/home/bench/.claude/projects
       - ${HOME}/.gemini/antigravity-cli:/home/bench/.gemini/antigravity-cli

@@ -14,6 +14,16 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
+AGENT="claude"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --agent) AGENT="$2"; shift 2 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]}"
+
 TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
 
 if ! command -v jq >/dev/null; then
@@ -24,10 +34,16 @@ fi
 # Same arm list/order as scripts/run-task.sh's --arm values, cumulative.
 ARMS=(baseline graphify serena headroom leanctx caveman)
 
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_BASE="$REPO_ROOT/results"
+else
+    RESULTS_BASE="$REPO_ROOT/results-agy"
+fi
+
 FOUND=0
 ROWS=()
 for ARM in "${ARMS[@]}"; do
-    RESULT_JSON="$REPO_ROOT/results/$ARM/${TASK_ID}.result.json"
+    RESULT_JSON="$RESULTS_BASE/$ARM/${TASK_ID}.result.json"
     [[ -f "$RESULT_JSON" ]] || continue
     FOUND=1
     ROWS+=("$(jq -c --arg arm "$ARM" \
@@ -36,7 +52,7 @@ for ARM in "${ARMS[@]}"; do
 done
 
 if [[ "$FOUND" -eq 0 ]]; then
-    echo "no results found for $TASK_ID under any of: ${ARMS[*]} (looked under results/<arm>/${TASK_ID}.result.json)" >&2
+    echo "no results found for $TASK_ID under any of: ${ARMS[*]} (looked under $(basename "$RESULTS_BASE")/<arm>/${TASK_ID}.result.json)" >&2
     exit 1
 fi
 

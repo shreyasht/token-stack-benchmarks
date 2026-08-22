@@ -97,7 +97,15 @@ if [[ ! -f "$TASKS_FILE" ]]; then
     exit 2
 fi
 
-RESULTS_DIR="$REPO_ROOT/results/$ARM"
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_DIR="$REPO_ROOT/results/$ARM"
+    MOUNT_DIR="/results/$ARM"
+    FRIENDLY_DIR="results/$ARM"
+else
+    RESULTS_DIR="$REPO_ROOT/results-agy/$ARM"
+    MOUNT_DIR="/results-agy/$ARM"
+    FRIENDLY_DIR="results-agy/$ARM"
+fi
 
 # Resume-safety: running on subscription auth, not a metered API key, so a
 # batch that hits a usage cap gets picked up again later (e.g. "tomorrow")
@@ -108,7 +116,7 @@ RESULTS_DIR="$REPO_ROOT/results/$ARM"
 # Scoped per-arm so the same task_id can be (re-)run under a different arm
 # without the skip check hiding it.
 if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]]; then
-    echo "skip: results/$ARM/${TASK_ID}.result.json already exists"
+    echo "skip: $FRIENDLY_DIR/${TASK_ID}.result.json already exists"
     exit 0
 fi
 
@@ -193,14 +201,15 @@ docker compose run --rm \
     -e ARM="$ARM" \
     -e ARM_INDEX="$ARM_INDEX" \
     -e AGENT="$AGENT" \
+    -e MOUNT_DIR="$MOUNT_DIR" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
     "${DOCKER_EXTRA_ARGS[@]}" \
     "${TRACK}-track" bash -c '
         set -euo pipefail
-        # docker-compose.yml mounts the whole host results/ dir at /results
+        # docker-compose.yml mounts the whole host results directories statically
         # — write under the arm subdir within it rather than remounting a
         # different host path, so this composes with that one static mount.
-        mkdir -p "/results/$ARM"
+        mkdir -p "$MOUNT_DIR"
 
         # Shallow fetch by exact commit SHA rather than a depth-limited
         # branch clone — guarantees the checked-out tree matches the task'"'"'s
@@ -268,7 +277,7 @@ docker compose run --rm \
                 --output-format json \
                 --dangerously-skip-permissions \
                 "${CLAUDE_EXTRA_ARGS[@]}" \
-                > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
+                > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
         else
             # agy branch
             if [[ "$ARM_INDEX" -ge 1 ]]; then
@@ -298,7 +307,7 @@ docker compose run --rm \
             
             agy --goal "$(cat /tmp/task-prompt.txt)" \
                 "${AGY_EXTRA_ARGS[@]}" \
-                > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
+                > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
         fi
         # If a permission prompt still blocks here despite the flag above,
         # known issue on non-interactive first runs — see
@@ -310,7 +319,7 @@ docker compose run --rm \
         # files entirely, which would have dropped exactly the kind of thing
         # the pilot-3 run actually did (added a new test file).
         git add -A
-        git diff --cached > "/results/$ARM/${TASK_ID}.patch" || true
+        git diff --cached > "$MOUNT_DIR/${TASK_ID}.patch" || true
     '
 DOCKER_EXIT=$?
 set -e
@@ -318,18 +327,18 @@ set -e
 RESULT_JSON="$RESULTS_DIR/${TASK_ID}.result.json"
 
 if [[ ! -f "$RESULT_JSON" ]]; then
-    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or claude likely crashed before producing output; see results/$ARM/${TASK_ID}.stderr.log if present" >&2
+    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or agent likely crashed before producing output; see $FRIENDLY_DIR/${TASK_ID}.stderr.log if present" >&2
     exit 1
 fi
 
 if ! jq -e . "$RESULT_JSON" >/dev/null 2>&1; then
-    echo "result.json is not valid JSON — claude likely crashed mid-output; see results/$ARM/${TASK_ID}.stderr.log" >&2
+    echo "result.json is not valid JSON — agent likely crashed mid-output; see $FRIENDLY_DIR/${TASK_ID}.stderr.log" >&2
     exit 1
 fi
 
 jq -n --arg task_id "$TASK_ID" --arg session_id "$SESSION_ID" --arg track "$TRACK" \
-      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" \
-      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm}' \
+      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" --arg agent "$AGENT" \
+      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm, agent:$agent}' \
       >> "$RESULTS_DIR/session-map.jsonl"
 
 IS_ERROR="$(jq -r '.is_error' "$RESULT_JSON")"
@@ -353,7 +362,7 @@ if [[ "$IS_ERROR" == "true" ]]; then
     exit 1
 fi
 
-echo "done: results/$ARM/${TASK_ID}.result.json (patch: results/$ARM/${TASK_ID}.patch, session: $SESSION_ID)"
+echo "done: $FRIENDLY_DIR/${TASK_ID}.result.json (patch: $FRIENDLY_DIR/${TASK_ID}.patch, session: $SESSION_ID)"
 
 # TODO before real runs:
 # - scoring (test_patch application + pass/fail) is handled by

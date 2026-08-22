@@ -38,16 +38,22 @@ TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 RAW_DATASET_DIR="$REPO_ROOT/tasks/raw/multi-swe-bench-java"
 
 ARM="baseline"
+AGENT="claude"
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
+        --agent) AGENT="$2"; shift 2 ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
 set -- "${ARGS[@]}"
 
-RESULTS_DIR="$REPO_ROOT/results/$ARM"
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_DIR="$REPO_ROOT/results/$ARM"
+else
+    RESULTS_DIR="$REPO_ROOT/results-agy/$ARM"
+fi
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
