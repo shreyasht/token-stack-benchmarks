@@ -197,19 +197,21 @@ scripts/score-java-batch.sh            # every attempted java task, or pass spec
 Both read each attempted task's `results/<task_id>.patch` and hand it to the
 harness in its own expected format — CLI flags and predictions/patch-file
 schemas were confirmed by reading each package's installed source directly
-(see the scripts' headers), not guessed from docs. **Java verified end to
-end** on a real Docker host: `scripts/score-java-batch.sh
-alibaba__fastjson2-1245` ran clean through `multi_swe_bench.harness.run_evaluation`
-and produced a `final_report.json` (unresolved — a real verdict, not a
-crash). **Python not yet run** — try one task_id before trusting a full
-batch.
+(see the scripts' headers), not guessed from docs. **Both verified end to
+end** on a real Docker host, one task_id each: java
+(`alibaba__fastjson2-1245`, via `multi_swe_bench.harness.run_evaluation` →
+unresolved) and python (`astropy__astropy-12907`, via
+`swebench.harness.run_evaluation` → resolved). Note: the python harness now
+requires the `SWE-bench/SWE-bench_Verified` dataset (the `princeton-nlp`
+mirror lacks the `image` field it needs) — already fixed in the script.
+Neither track has run a full batch yet.
 
 ## Status
 
 Infrastructure scaffold, task sampling, task running, and scoring wiring are
-all in place. Java scoring path is confirmed working end to end (one
-task_id, unresolved verdict); python scoring path and any full batch run
-are still pending (the pilot in `results/README.md` predates the scoring
-harness and was checked informally against a reference PR instead). Once a
-real batch runs — agent + scoring both — results get written up in
-`token-optimization-stack/BENCHMARKING.md`, not here.
+all in place and confirmed working end to end for both tracks (one task_id
+each, real Docker host, real verdicts). No full batch run yet (the pilot in
+`results/README.md` predates the scoring harness and was checked informally
+against a reference PR instead). Once a real batch runs — agent + scoring
+both — results get written up in `token-optimization-stack/BENCHMARKING.md`,
+not here.

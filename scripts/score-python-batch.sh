@@ -18,12 +18,9 @@
 # VERIFIED: CLI flags and predictions.json schema below were confirmed by
 # reading the installed swebench package source directly (harness/
 # run_evaluation.py's argparse block, harness/utils.py's
-# get_predictions_from_file) — not guessed from docs.
-# NOT VERIFIED: actually building+running swebench's per-instance Docker
-# images end to end — that needs a real Docker host with real disk/network
-# (this was written without one available). Try one task_id before trusting
-# a full batch; the harness's own per-instance build can take a while and
-# use significant disk the first time for any given repo/version.
+# get_predictions_from_file) — not guessed from docs. Also verified end to
+# end on a real Docker host: astropy__astropy-12907 ran clean through
+# run_evaluation and reported resolved.
 #
 # Usage: scripts/score-python-batch.sh [task_id ...]   # default: every attempted python task
 # Requires: pip install swebench, jq, Docker
