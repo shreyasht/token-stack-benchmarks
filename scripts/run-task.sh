@@ -281,6 +281,12 @@ docker compose run --rm \
                 > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
         else
             # agy branch
+            # Setup isolated writable HOME for agy to avoid root-owned mount permission issues
+            export HOME=/tmp/agy_home
+            mkdir -p /tmp/agy_home/.gemini
+            cp -r /tmp/host_agy_data /tmp/agy_home/.gemini/antigravity-cli
+            chmod -R u+w /tmp/agy_home
+            
             if [[ "$ARM_INDEX" -ge 1 ]]; then
                 # Assume graphify has an agy platform or just fallback
                 graphify install --project --strict --platform agy || true
