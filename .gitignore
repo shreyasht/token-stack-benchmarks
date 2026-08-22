@@ -1,4 +1,8 @@
 results/*.log
 results/*.json
+results/*.jsonl
+results/*.patch
+results/*-scores/
 !results/.gitkeep
+!results/README.md
 .env

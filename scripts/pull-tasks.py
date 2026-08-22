@@ -19,6 +19,14 @@ Output rows share a common schema across both tracks (see build_python_row /
 build_java_row) so scripts/run-task.sh and any future scorer can consume
 either without a track-specific code path for basic fields.
 
+Also caches the raw Multi-SWE-bench per-repo jsonl files under
+tasks/raw/multi-swe-bench-java/ — scripts/score-java-batch.sh needs the full
+original records (build/env metadata, not just the flat fields kept in
+tasks.json) as --dataset_files for the real multi-swe-bench harness. Cached
+rather than re-fetched at scoring time so scoring runs against exactly what
+was sampled from, matching the "fixed, versioned" principle for tasks.json
+itself.
+
 Deps: pip install pandas pyarrow requests
 Usage: python3 scripts/pull-tasks.py [--seed 42] [--min-per-repo 20] [--out tasks/tasks.json]
 """
@@ -26,6 +34,7 @@ Usage: python3 scripts/pull-tasks.py [--seed 42] [--min-per-repo 20] [--out task
 import argparse
 import io
 import json
+import os
 import random
 import sys
 from collections import defaultdict
@@ -147,6 +156,13 @@ def build_java_row(rec, difficulty_label):
         "task_id": rec["instance_id"],
         "track": "java",
         "repo": f"{rec['org']}/{rec['repo']}",
+        # org/number kept separately (not just folded into "repo"/"task_id")
+        # because scripts/score-java-batch.sh has to build multi-swe-bench's
+        # own Patch record shape ({org, repo, number, fix_patch}) later —
+        # that schema is fixed by their harness, confirmed by inspecting
+        # multi_swe_bench.harness.run_evaluation.Patch / PullRequestBase.
+        "org": rec["org"],
+        "number": rec["number"],
         "base_commit": rec["base"]["sha"],
         "problem_statement": problem_statement,
         "patch": rec["fix_patch"],
@@ -159,12 +175,17 @@ def build_java_row(rec, difficulty_label):
     }
 
 
-def load_java_rows():
+def load_java_rows(raw_dir):
     rows = []
+    os.makedirs(raw_dir, exist_ok=True)
     for repo, filename in JAVA_REPOS.items():
         url = MULTI_SWE_BENCH_JAVA_BASE + filename
         log(f"fetching {url}")
-        text = fetch_bytes(url).decode("utf-8")
+        raw_bytes = fetch_bytes(url)
+        with open(os.path.join(raw_dir, filename), "wb") as f:
+            f.write(raw_bytes)
+
+        text = raw_bytes.decode("utf-8")
         raw = [json.loads(line) for line in text.splitlines() if line.strip()]
         gated = [r for r in raw if java_quality_gate(r)]
         log(f"  {repo}: {len(raw)} instances, {len(gated)} pass quality gate")
@@ -217,6 +238,8 @@ def main():
     ap.add_argument("--min-per-repo", type=int, default=20,
                      help="target sample size per repo (BENCHMARKING.md: minimum 20 in the verified tier)")
     ap.add_argument("--out", default="tasks/tasks.json")
+    ap.add_argument("--raw-dir", default="tasks/raw/multi-swe-bench-java",
+                     help="where to cache the full raw Multi-SWE-bench per-repo jsonl files")
     ap.add_argument("--python-only", action="store_true")
     ap.add_argument("--java-only", action="store_true")
     args = ap.parse_args()
@@ -227,7 +250,7 @@ def main():
     if not args.java_only:
         all_rows.extend(load_python_rows())
     if not args.python_only:
-        all_rows.extend(load_java_rows())
+        all_rows.extend(load_java_rows(args.raw_dir))
 
     by_repo = defaultdict(list)
     for r in all_rows:

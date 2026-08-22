@@ -57,15 +57,18 @@ agentsview serve
 ```
 Default web UI: `http://127.0.0.1:8080`.
 
-**⚠️ Unverified — check before relying on it:** the default bind is
-`127.0.0.1`, which is loopback-only and will **not** be reachable from inside
-a container via `host.docker.internal` (that resolves to the host's real
-gateway IP, not its loopback interface). Run `agentsview serve --help` and
-check `~/.agentsview/config.toml` for a bind-host option before your first
-real run — if there isn't one, drop the `AGENTSVIEW_ENDPOINT` wiring in
-`docker-compose.yml` and instead point each task container's results at the
-`./results` volume mount, importing into Agentsview from the host after each
-batch.
+Agentsview has no push/ingest API (confirmed against upstream README) — it's
+a local file-watcher over `~/.claude/projects/`, so there's no endpoint or
+bind-host concern here at all. `docker-compose.yml` mounts that directory
+into each task container (writable) so containers write session transcripts
+where the host's Agentsview file-watcher actually sees them. Every task
+container shares the same in-container cwd (`/workspace/repo`), which would
+otherwise make every session indistinguishable in Agentsview's UI (same
+directory-hashed "project" for all of them) — `scripts/run-task.sh` handles
+this by generating a session ID itself and passing it to `claude -p
+--session-id`, then recording `{task_id, session_id, ...}` in
+`results/session-map.jsonl`, so any session can be traced back to the task
+that produced it.
 
 **3. Authenticate Claude Code with your subscription, not an API key.**
 Deliberate choice to avoid per-token spend — accepted tradeoff is hitting
@@ -116,6 +119,11 @@ Regenerating with a different `--seed` changes the sample — only do that
 deliberately and commit the new file, since `BENCHMARKING.md` requires a
 fixed, reproducible task list.
 
+`scripts/pull-tasks.py` also caches the full raw Multi-SWE-bench per-repo
+files under `tasks/raw/multi-swe-bench-java/` (committed, same
+fixed-sample reasoning) — `scripts/score-java-batch.sh` needs the original
+records (build/env metadata), not just the flat fields kept in `tasks.json`.
+
 ## Running a task
 
 Requires `jq` on the host (`sudo dnf install -y jq` / `apt-get install -y jq`).
@@ -128,14 +136,77 @@ scripts/run-task.sh <task-id>
 `fasterxml__jackson-databind-1234`) — the script looks up that row's track,
 repo, base commit, and problem statement itself; no other arguments needed.
 It shallow-fetches the repo at the task's exact `base_commit` (by SHA, not a
-branch) so the checked-out tree matches what the task's patches assume.
+branch) so the checked-out tree matches what the task's patches assume, then
+runs the agent via `claude -p --output-format json --session-id <generated>`
+and captures:
+- `results/<task-id>.result.json` — the run's own JSON summary (cost, token
+  usage, `is_error`, `api_error_status`, the session ID)
+- `results/<task-id>.patch` — the agent's actual code changes (`git diff`
+  after `git add -A`, so new files it created are included, not just edits
+  to existing ones)
+- an appended line in `results/session-map.jsonl` tying `task_id` to the
+  Agentsview session ID for that run
 
-Still a skeleton, not a finished harness — see the TODOs at the bottom of
-`scripts/run-task.sh`. It does not yet apply the task's `test_patch` or score
-pass/fail against `FAIL_TO_PASS`/`PASS_TO_PASS`.
+Exit codes matter if you're scripting around this directly: `0` ran fine,
+`1` the task failed (bad checkout, agent error, crash) but that's not fatal
+to a batch, `2` bad input (unknown task_id), `3` a rate-limit/quota hit was
+detected — a batch should stop on `3`, not keep burning through remaining
+tasks against an exhausted subscription quota. That detection is
+best-effort: it checks for a `429` `api_error_status` and a few plausible
+phrases in the result text (confirmed real fields, via a live
+`--output-format json` test that forced a different API error — but the
+exact shape of a *subscription usage-cap* hit specifically hasn't been
+observed live yet). Tighten it the first time a real batch actually hits
+the cap.
+
+This script does **not** apply `test_patch` or score pass/fail — see
+Scoring below.
+
+## Running a batch
+
+```bash
+scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N]
+```
+
+Runs `scripts/run-task.sh` over every matching `task_id` in
+`tasks/tasks.json`, skipping ones with an existing `results/<task_id>.result.json`
+(resume-safe, same reasoning as run-task.sh's own skip check). Stops the
+whole batch immediately on a rate-limit/quota hit (exit `3`); an ordinary
+task failure (exit `1`) doesn't stop the batch, it's just counted. Prints a
+`done=/failed=/skipped=` summary and the list of failed task_ids at the end.
+
+## Scoring
+
+Neither script above touches `test_patch` or determines pass/fail — that's
+delegated entirely to the real upstream evaluation harnesses (`swebench` for
+Python, `multi-swe-bench` for Java) rather than hand-rolling per-repo/
+version test commands here, which risks silently wrong pass/fail. Both
+harnesses build their own per-instance Docker image (a different mechanism
+from this repo's lightweight `java-track`/`python-track` images), apply the
+patch, run the real test suite, and report resolved/unresolved against
+`FAIL_TO_PASS`/`PASS_TO_PASS`.
+
+```bash
+pip install swebench
+scripts/score-python-batch.sh          # every attempted python task, or pass specific task_ids
+
+pip install multi-swe-bench
+scripts/score-java-batch.sh            # every attempted java task, or pass specific task_ids
+```
+
+Both read each attempted task's `results/<task_id>.patch` and hand it to the
+harness in its own expected format — CLI flags and predictions/patch-file
+schemas were confirmed by reading each package's installed source directly
+(see the scripts' headers), not guessed from docs. **Neither has been run
+end to end**: building and running per-instance Docker images needs a real
+Docker host with real disk/network, which wasn't available while writing
+these. Try one task_id before trusting a full batch.
 
 ## Status
 
-Infrastructure scaffold only. No benchmark runs have happened yet. Once the
-task-loading and scoring TODOs are filled in and a pilot batch runs, results
-get written up in `token-optimization-stack/BENCHMARKING.md`, not here.
+Infrastructure scaffold, task sampling, task running, and scoring wiring are
+all in place; no scored benchmark batch has been run yet (the pilot in
+`results/README.md` predates the scoring harness and was checked informally
+against a reference PR instead). Once a real batch runs — agent + scoring
+both — results get written up in `token-optimization-stack/BENCHMARKING.md`,
+not here.
