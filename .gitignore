@@ -5,5 +5,11 @@ results/**/*.patch
 results/**/*-scores/
 !results/.gitkeep
 !results/README.md
+results-agy/**/*.log
+results-agy/**/*.json
+results-agy/**/*.jsonl
+results-agy/**/*.patch
+results-agy/**/*-scores/
+!results-agy/.gitkeep
 graph-cache/
 .env
