@@ -24,7 +24,14 @@
 #   — with no --limit, every task_id in --tasks-file is selected. Give
 #   explicit task_id(s) instead to run exactly those.
 # --model/--effort forwarded to scripts/run-task.sh as-is (see its header).
-# Reruns are cheap: scripts/run-task.sh skips any arm+task already run.
+# Reruns are cheap: scripts/run-task.sh skips any arm+task already run (and
+# validates the JSON before skipping, so a task killed mid-run — server
+# stop, Ctrl-C, out-of-quota — gets retried rather than silently counted as
+# done). Safe to kill this script itself at any point and re-run the exact
+# same command later to resume from whatever's already on disk.
+# --status: don't run anything — just print how many of the selected
+# task×arm combos already have a valid result on disk vs are still pending,
+# then exit. Use this after a kill to see where a batch left off.
 # Requires: jq
 
 set -euo pipefail
@@ -40,6 +47,7 @@ ARMS_CSV="baseline,caveman"
 AGENT="claude"
 MODEL=""
 EFFORT=""
+STATUS=false
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -51,6 +59,7 @@ while [[ $# -gt 0 ]]; do
         --agent) AGENT="$2"; shift 2 ;;
         --model) MODEL="$2"; shift 2 ;;
         --effort) EFFORT="$2"; shift 2 ;;
+        --status) STATUS=true; shift ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
@@ -92,24 +101,10 @@ fi
 
 echo "run-and-compare: ${#TASK_IDS[@]} task(s) from $(basename "$TASKS_FILE"), arms=${ARMS_CSV} agent=$AGENT model=${MODEL:-default} effort=${EFFORT:-default}"
 
-for TASK_ID in "${TASK_IDS[@]}"; do
-    for ARM in "${ARMS[@]}"; do
-        echo "=== $TASK_ID / $ARM ==="
-        set +e
-        "$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" --agent "$AGENT" --model "$MODEL" --effort "$EFFORT"
-        RC=$?
-        set -e
-        if [[ "$RC" -eq 3 ]]; then
-            echo "stopped: rate-limit/quota hit on $TASK_ID / $ARM" >&2
-            exit 3
-        fi
-        # exit 1 (task failure) is not fatal to the batch — keep going, it'll
-        # just be missing from the comparison table below.
-    done
-done
-
 # Same path-segment logic as scripts/compare-arms.sh: results/ or
 # results-agy/, plus a model-<model>[-effort-<level>]/ subdir when set.
+# Computed up front (not just after the run loop) so --status can use it
+# without running anything.
 if [[ "$AGENT" == "claude" ]]; then
     RESULTS_BASE="$REPO_ROOT/results"
 else
@@ -127,6 +122,40 @@ if [[ -n "$MODEL" || -n "$EFFORT" ]]; then
     fi
     MODEL_SEGMENT_SUFFIX="/$MODEL_SEGMENT"
 fi
+
+if [[ "$STATUS" == true ]]; then
+    DONE=0
+    PENDING=0
+    for TASK_ID in "${TASK_IDS[@]}"; do
+        for ARM in "${ARMS[@]}"; do
+            RESULT_JSON="$RESULTS_BASE/$ARM$MODEL_SEGMENT_SUFFIX/${TASK_ID}.result.json"
+            if [[ -f "$RESULT_JSON" ]] && jq -e . "$RESULT_JSON" >/dev/null 2>&1; then
+                DONE=$((DONE + 1))
+            else
+                PENDING=$((PENDING + 1))
+                echo "pending: $TASK_ID / $ARM"
+            fi
+        done
+    done
+    echo "status: done=$DONE pending=$PENDING (of $((${#TASK_IDS[@]} * ${#ARMS[@]})) total task×arm combos)"
+    exit 0
+fi
+
+for TASK_ID in "${TASK_IDS[@]}"; do
+    for ARM in "${ARMS[@]}"; do
+        echo "=== $TASK_ID / $ARM ==="
+        set +e
+        "$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" --agent "$AGENT" --model "$MODEL" --effort "$EFFORT"
+        RC=$?
+        set -e
+        if [[ "$RC" -eq 3 ]]; then
+            echo "stopped: rate-limit/quota hit on $TASK_ID / $ARM" >&2
+            exit 3
+        fi
+        # exit 1 (task failure) is not fatal to the batch — keep going, it'll
+        # just be missing from the comparison table below.
+    done
+done
 
 echo
 echo "--- savings: $BASELINE_ARM -> $FINAL_ARM ---"

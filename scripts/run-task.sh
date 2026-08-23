@@ -173,16 +173,24 @@ MOUNT_DIR="/$RESULTS_BASE_NAME/$ARM_REL"
 FRIENDLY_DIR="$RESULTS_BASE_NAME/$ARM_REL"
 
 # Resume-safety: running on subscription auth, not a metered API key, so a
-# batch that hits a usage cap gets picked up again later (e.g. "tomorrow")
-# without re-spending quota on tasks already done. Skip anything already
-# attempted instead of re-running it — result.json existing means the
-# container ran to completion (success or agent-side failure both write it;
-# only a crash before claude produced output leaves it missing, see below).
-# Scoped per-arm so the same task_id can be (re-)run under a different arm
-# without the skip check hiding it.
-if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]]; then
+# batch that hits a usage cap (or gets killed outright — server stop,
+# Ctrl-C, `docker compose run` interrupted mid-task) gets picked up again
+# later without re-spending quota on tasks already done. Skip anything
+# already attempted instead of re-running it — result.json existing AND
+# being valid JSON means the container ran to completion (success or
+# agent-side failure both write valid JSON; only a crash before claude
+# produced output, or a kill mid-write, leaves it missing or truncated).
+# The jq -e check matters here specifically for the kill-mid-task case: a
+# `>` redirect killed partway through writing leaves a truncated/invalid
+# file on disk, which would otherwise look "done" forever and silently skip
+# a task that never actually finished. Scoped per-arm so the same task_id
+# can be (re-)run under a different arm without the skip check hiding it.
+if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]] && jq -e . "$RESULTS_DIR/${TASK_ID}.result.json" >/dev/null 2>&1; then
     echo "skip: $FRIENDLY_DIR/${TASK_ID}.result.json already exists"
     exit 0
+fi
+if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]]; then
+    echo "found truncated/invalid $FRIENDLY_DIR/${TASK_ID}.result.json (likely killed mid-run) — retrying" >&2
 fi
 
 # No `-e` here: it makes jq exit non-zero on a `null` result, which under
