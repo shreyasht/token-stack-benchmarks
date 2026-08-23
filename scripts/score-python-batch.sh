@@ -22,10 +22,12 @@
 # end on a real Docker host: astropy__astropy-12907 ran clean through
 # run_evaluation and reported resolved.
 #
-# Usage: scripts/score-python-batch.sh [--arm <name>] [--rep <n>] [task_id ...]   # default: baseline arm, rep 1, every attempted python task
-# --arm selects which ablation arm's results/<arm>/ dir to score — see
+# Usage: scripts/score-python-batch.sh [--arm <name>] [--rep <n>] [--agent <claude|agy>] [task_id ...]   # default: baseline arm, rep 1, claude, every attempted python task
+# --arm selects which ablation arm's results dir to score — see
 # scripts/run-task.sh's header for the arm list. Defaults to baseline.
 # --rep selects which repeat to score (default 1); see run-task.sh's --rep.
+# --agent selects which agent's results tree (results/ vs results-agy/) to
+# score (default claude); see run-task.sh's --agent.
 # Requires: pip install swebench, jq, Docker
 
 set -euo pipefail
@@ -37,23 +39,30 @@ DATASET_NAME="SWE-bench/SWE-bench_Verified"   # NOT princeton-nlp — that mirro
 
 ARM="baseline"
 REP=1
+AGENT="claude"
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
+        --agent) AGENT="$2"; shift 2 ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
 set -- "${ARGS[@]}"
 
-# rep 1 stays at results/<arm>/ (matches scripts/run-task.sh's default,
-# no migration needed); rep N>1 reads results/<arm>/repN/ instead.
+# rep 1 stays at <results-dir>/<arm>/ (matches scripts/run-task.sh's
+# default, no migration needed); rep N>1 reads <results-dir>/<arm>/repN/
+# instead. <results-dir> is results/ for claude, results-agy/ for agy.
 ARM_REL="$ARM"
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL="$ARM/rep$REP"
 fi
-RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
+else
+    RESULTS_DIR="$REPO_ROOT/results-agy/$ARM_REL"
+fi
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
@@ -102,7 +111,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
 done
 
 if [[ ${#SCORED_IDS[@]} -eq 0 ]]; then
-    echo "no attempted python-track tasks found under results/$ARM_REL/ — run scripts/run-batch.sh --track python --arm $ARM first" >&2
+    echo "no attempted python-track tasks found under $RESULTS_DIR/ — run scripts/run-batch.sh --track python --arm $ARM first" >&2
     exit 1
 fi
 
@@ -112,7 +121,7 @@ RUN_ID="score-$(date +%Y%m%d-%H%M%S)"
 REPORT_DIR="$RESULTS_DIR/python-scores"
 mkdir -p "$REPORT_DIR"
 
-echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM) against $DATASET_NAME, run_id=$RUN_ID"
+echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM rep=$REP agent=$AGENT) against $DATASET_NAME, run_id=$RUN_ID"
 
 python3 -m swebench.harness.run_evaluation \
     --dataset_name "$DATASET_NAME" \

@@ -32,8 +32,11 @@ services:
       dockerfile: images/java.Dockerfile
     volumes:
       - ./results:/results
+      - ./results-agy:/results-agy
       - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
       - ${HOME}/.claude/projects:/home/bench/.claude/projects
+      - ${HOME}/.gemini/antigravity-cli:/tmp/host_agy_data:ro
+      - ${HOME}/.gemini/antigravity-cli/brain:/tmp/host_agy_brain
     mem_limit: 4g
     cpus: 2
 
@@ -43,7 +46,10 @@ services:
       dockerfile: images/python.Dockerfile
     volumes:
       - ./results:/results
+      - ./results-agy:/results-agy
       - ${HOME}/.claude/.credentials.json:/home/bench/.claude/.credentials.json:ro
       - ${HOME}/.claude/projects:/home/bench/.claude/projects
+      - ${HOME}/.gemini/antigravity-cli:/tmp/host_agy_data:ro
+      - ${HOME}/.gemini/antigravity-cli/brain:/tmp/host_agy_brain
     mem_limit: 4g
     cpus: 2

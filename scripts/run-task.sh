@@ -7,14 +7,20 @@
 # real swebench / multi-swe-bench harnesses instead of reimplementing their
 # per-repo build/test logic.
 #
-# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>] [--rep <n>]
+# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>] [--rep <n>] [--agent <claude|agy>]
 # Requires: jq
 #
 # --rep selects which repeat of this arm to run (default 1), for
 # BENCHMARKING.md's >=3-repeats-per-arm requirement. rep 1 writes to
-# results/<arm>/ (unchanged, no migration needed for already-run rep-1
-# data); rep N>1 writes to results/<arm>/repN/ instead, so reps never
+# <results-dir>/<arm>/ (unchanged, no migration needed for already-run rep-1
+# data); rep N>1 writes to <results-dir>/<arm>/repN/ instead, so reps never
 # collide with each other or with rep 1.
+#
+# --agent selects which CLI runs the task: `claude` (default, Claude Code)
+# or `agy` (Antigravity CLI). Results land in separate top-level trees
+# (results/ vs results-agy/) so the two agents' data never collide — an
+# agent is a different variable from an arm, not another arm value, since
+# every arm 0-4 can in principle be run under either.
 #
 # --arm selects which ablation arm to run, per BENCHMARKING.md's ablation
 # design. Cumulative — each arm includes every tool before it:
@@ -57,6 +63,9 @@
 # complexity, and Claude Code sends one fixed model for a whole -p session —
 # wiring it in as literally documented wouldn't measure real routing savings.
 # Both added complexity disproportionate to what they measurably deliver.
+# The --agent agy path below was merged from a branch cut before this
+# removal, so its arm wiring is renumbered here to match the 5-arm scheme —
+# it must NOT reintroduce headroom.
 #
 # Exit codes (matter to scripts/run-batch.sh):
 #   0  task ran, agent completed without error (correctness unscored here)
@@ -74,17 +83,24 @@ shift
 
 ARM="baseline"
 REP=1
+AGENT="claude"
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
+        --agent) AGENT="$2"; shift 2 ;;
         *) TASKS_FILE="$1"; shift ;;
     esac
 done
 
 if ! [[ "$REP" =~ ^[0-9]+$ ]] || [[ "$REP" -lt 1 ]]; then
     echo "bad --rep '$REP' (want a positive integer)" >&2
+    exit 2
+fi
+
+if [[ "$AGENT" != "claude" && "$AGENT" != "agy" ]]; then
+    echo "unknown --agent '$AGENT' (want: claude|agy)" >&2
     exit 2
 fi
 
@@ -110,13 +126,23 @@ if [[ ! -f "$TASKS_FILE" ]]; then
     exit 2
 fi
 
-# rep 1 stays at results/<arm>/ (backward compat, no migration for existing
-# data); rep N>1 gets its own results/<arm>/repN/ subdir.
+# rep 1 stays at <results-dir>/<arm>/ (backward compat, no migration for
+# existing data); rep N>1 gets its own <results-dir>/<arm>/repN/ subdir.
+# <results-dir> is results/ for claude, results-agy/ for agy — a separate
+# top-level tree per agent (see docker-compose.yml's two static mounts)
+# rather than another arm value, so claude and agy data never collide.
 ARM_REL="$ARM"
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL="$ARM/rep$REP"
 fi
-RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_BASE_NAME="results"
+else
+    RESULTS_BASE_NAME="results-agy"
+fi
+RESULTS_DIR="$REPO_ROOT/$RESULTS_BASE_NAME/$ARM_REL"
+MOUNT_DIR="/$RESULTS_BASE_NAME/$ARM_REL"
+FRIENDLY_DIR="$RESULTS_BASE_NAME/$ARM_REL"
 
 # Resume-safety: running on subscription auth, not a metered API key, so a
 # batch that hits a usage cap gets picked up again later (e.g. "tomorrow")
@@ -127,7 +153,7 @@ RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
 # Scoped per-arm so the same task_id can be (re-)run under a different arm
 # without the skip check hiding it.
 if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]]; then
-    echo "skip: results/$ARM_REL/${TASK_ID}.result.json already exists"
+    echo "skip: $FRIENDLY_DIR/${TASK_ID}.result.json already exists"
     exit 0
 fi
 
@@ -203,6 +229,11 @@ if [[ "$ARM_INDEX" -ge 1 ]]; then
     DOCKER_EXTRA_ARGS+=(-v "$GRAPH_CACHE_DIR:/home/bench/.graphify-cache")
 fi
 
+if [[ "$AGENT" == "agy" ]]; then
+    HOST_AGY_PATH="$(which agy)"
+    DOCKER_EXTRA_ARGS+=(-v "$HOST_AGY_PATH:/usr/local/bin/agy:ro")
+fi
+
 set +e
 docker compose run --rm \
     -e REPO_URL="$REPO_URL" \
@@ -210,16 +241,18 @@ docker compose run --rm \
     -e BASE_COMMIT="$BASE_COMMIT" \
     -e SESSION_ID="$SESSION_ID" \
     -e ARM="$ARM" \
-    -e ARM_REL="$ARM_REL" \
     -e ARM_INDEX="$ARM_INDEX" \
+    -e AGENT="$AGENT" \
+    -e MOUNT_DIR="$MOUNT_DIR" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
     "${DOCKER_EXTRA_ARGS[@]}" \
     "${TRACK}-track" bash -c '
         set -euo pipefail
-        # docker-compose.yml mounts the whole host results/ dir at /results
-        # — write under the arm subdir within it rather than remounting a
-        # different host path, so this composes with that one static mount.
-        mkdir -p "/results/$ARM_REL"
+        # docker-compose.yml mounts the whole host results/ and results-agy/
+        # dirs statically — write under the arm (+rep) subdir within
+        # whichever one $MOUNT_DIR points at, rather than remounting a
+        # different host path, so this composes with those static mounts.
+        mkdir -p "$MOUNT_DIR"
 
         # Shallow fetch by exact commit SHA rather than a depth-limited
         # branch clone — guarantees the checked-out tree matches the task'"'"'s
@@ -245,74 +278,148 @@ docker compose run --rm \
         } >> .git/info/exclude
 
         # Ablation-arm wiring: each block below registers one more tool with
-        # Claude Code, cumulative on $ARM_INDEX. Kept as registration steps
-        # (MCP add / plugin install / onboard), never a wrapping launcher
-        # (e.g. `lean-ctx wrap claude`), so the actual process invoked below
-        # is always literally `claude -p --output-format json --session-id
-        # ...` regardless of arm — one less variable between arms.
+        # the agent CLI, cumulative on $ARM_INDEX. Kept as registration
+        # steps (MCP add / plugin install / onboard), never a wrapping
+        # launcher (e.g. `lean-ctx wrap claude`), so the actual process
+        # invoked below is always the plain `-p ... --output-format json`
+        # call regardless of arm — one less variable between arms.
         SYSTEM_PROMPT=""
-        if [[ "$ARM_INDEX" -ge 1 ]]; then
-            # --project --strict (needs --project — VERIFIED via `graphify
-            # install --help`) blocks the first raw file read per session
-            # until a `graphify query` runs, via a PreToolUse hook — a hard
-            # gate, not just the system-prompt nudge below.
-            graphify install --project --strict --platform claude
-            # graphify-out symlinked to the host-mounted cache
-            # (/home/bench/.graphify-cache — see run-task.sh'"'"'s comment
-            # above the docker compose invocation for why it'"'"'s not
-            # mounted directly at this path) so `graphify extract`'"'"'s
-            # default output location transparently persists across
-            # exact-commit repeats of this task.
-            ln -s /home/bench/.graphify-cache graphify-out
-            # Deterministic pre-build, not left for the agent to discover
-            # mid-session (that inflated turns/cost the first time this arm
-            # ran for real — the graph didn'"'"'t exist yet). --code-only
-            # --no-cluster: local tree-sitter AST only, no LLM calls, so
-            # this step has no hidden token/quota cost of its own.
-            graphify extract . --code-only --no-cluster
-            SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
-        fi
-        if [[ "$ARM_INDEX" -ge 2 ]]; then
-            claude mcp add --scope local serena -- serena start-mcp-server --context claude-code --project /workspace/repo
-            SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
-        fi
-        if [[ "$ARM_INDEX" -ge 3 ]]; then
-            # VERIFIED on real EC2 install (`lean-ctx onboard --help`): no
-            # --tool/--yes flags exist, it auto-detects installed agents.
-            lean-ctx onboard
-        fi
 
-        # Caveman is baked into the image at build time (its install.sh
-        # registers the plugin itself, contrary to its docs) and is enabled
-        # by default in every fresh container regardless of arm — VERIFIED
-        # live: `claude plugin list` showed caveman@caveman already
-        # "enabled" before this block ever ran. So every arm below caveman
-        # must explicitly disable it, or lower arms are silently contaminated
-        # with its output-compression hook. Already enabled for the caveman
-        # arm itself by default — nothing to do there.
-        if [[ "$ARM_INDEX" -lt 4 ]]; then
-            claude plugin disable caveman || true
-        fi
+        if [[ "$AGENT" == "claude" ]]; then
+            if [[ "$ARM_INDEX" -ge 1 ]]; then
+                # --project --strict (needs --project — VERIFIED via
+                # `graphify install --help`) blocks the first raw file read
+                # per session until a `graphify query` runs, via a
+                # PreToolUse hook — a hard gate, not just the system-prompt
+                # nudge below.
+                graphify install --project --strict --platform claude
+                # graphify-out symlinked to the host-mounted cache
+                # (/home/bench/.graphify-cache) so `graphify extract`'"'"'s
+                # default output location transparently persists across
+                # exact-commit repeats of this task.
+                ln -s /home/bench/.graphify-cache graphify-out
+                # Deterministic pre-build, not left for the agent to
+                # discover mid-session (that inflated turns/cost the first
+                # time this arm ran for real — the graph didn'"'"'t exist
+                # yet). --code-only --no-cluster: local tree-sitter AST
+                # only, no LLM calls, so this step has no hidden
+                # token/quota cost of its own.
+                graphify extract . --code-only --no-cluster
+                SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
+            fi
+            if [[ "$ARM_INDEX" -ge 2 ]]; then
+                claude mcp add --scope local serena -- serena start-mcp-server --context claude-code --project /workspace/repo
+                SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
+            fi
+            if [[ "$ARM_INDEX" -ge 3 ]]; then
+                # VERIFIED on real EC2 install (`lean-ctx onboard --help`):
+                # no --tool/--yes flags exist, it auto-detects installed
+                # agents.
+                lean-ctx onboard
+            fi
 
-        # Array, not a bare ${SYSTEM_PROMPT:+...} expansion — the latter
-        # word-splits on the spaces inside $SYSTEM_PROMPT and leaks literal
-        # quote characters into argv once past parameter expansion.
-        CLAUDE_EXTRA_ARGS=()
-        if [[ -n "$SYSTEM_PROMPT" ]]; then
-            CLAUDE_EXTRA_ARGS=(--append-system-prompt "$SYSTEM_PROMPT")
-        fi
+            # Caveman is baked into the image at build time (its install.sh
+            # registers the plugin itself, contrary to its docs) and is
+            # enabled by default in every fresh container regardless of
+            # arm — VERIFIED live: `claude plugin list` showed
+            # caveman@caveman already "enabled" before this block ever ran.
+            # So every arm below caveman must explicitly disable it, or
+            # lower arms are silently contaminated with its
+            # output-compression hook. Already enabled for the caveman arm
+            # itself by default — nothing to do there.
+            if [[ "$ARM_INDEX" -lt 4 ]]; then
+                claude plugin disable caveman || true
+            fi
 
-        # claude itself is allowed to fail/error here (set +e-equivalent via
-        # ||true) — a bad run still needs its JSON result captured (for the
-        # is_error/api_error_status check on the host below) and whatever
-        # diff exists still captured, rather than the whole script aborting
-        # and losing that signal.
-        claude -p "$(cat /tmp/task-prompt.txt)" \
-            --session-id "$SESSION_ID" \
-            --output-format json \
-            --dangerously-skip-permissions \
-            "${CLAUDE_EXTRA_ARGS[@]}" \
-            > "/results/$ARM_REL/${TASK_ID}.result.json" 2> "/results/$ARM_REL/${TASK_ID}.stderr.log" || true
+            # Array, not a bare ${SYSTEM_PROMPT:+...} expansion — the
+            # latter word-splits on the spaces inside $SYSTEM_PROMPT and
+            # leaks literal quote characters into argv once past parameter
+            # expansion.
+            CLAUDE_EXTRA_ARGS=()
+            if [[ -n "$SYSTEM_PROMPT" ]]; then
+                CLAUDE_EXTRA_ARGS=(--append-system-prompt "$SYSTEM_PROMPT")
+            fi
+
+            # claude itself is allowed to fail/error here (set +e-equivalent
+            # via ||true) — a bad run still needs its JSON result captured
+            # (for the is_error/api_error_status check on the host below)
+            # and whatever diff exists still captured, rather than the
+            # whole script aborting and losing that signal.
+            claude -p "$(cat /tmp/task-prompt.txt)" \
+                --session-id "$SESSION_ID" \
+                --output-format json \
+                --dangerously-skip-permissions \
+                "${CLAUDE_EXTRA_ARGS[@]}" \
+                > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
+        else
+            # agy (Antigravity CLI) branch. Renumbered to match the 5-arm
+            # scheme above (graphify=1, serena=2, leanctx=3, caveman=4) —
+            # this was merged from a branch cut before headroom was removed
+            # and the arms renumbered, so it must NOT call headroom.
+            #
+            # Isolated writable HOME for agy so it never touches the
+            # container'"'"'s real $HOME (shared with claude'"'"'s own
+            # config) and never needs to write into the read-only host
+            # mount directly.
+            export HOME=/tmp/agy_home
+            mkdir -p /tmp/agy_home/.gemini
+            cp -r /tmp/host_agy_data /tmp/agy_home/.gemini/antigravity-cli
+            chmod -R u+w /tmp/agy_home
+
+            if [[ "$ARM_INDEX" -ge 1 ]]; then
+                # TODO: confirm `graphify install --platform agy` is a real
+                # flag value against `graphify install --help` on the real
+                # EC2 agy install — unverified, kept from the source branch.
+                graphify install --project --strict --platform agy || true
+                ln -s /home/bench/.graphify-cache graphify-out
+                graphify extract . --code-only --no-cluster
+                SYSTEM_PROMPT+="Prefer Graphify queries over raw file reads when exploring the codebase. "
+            fi
+            if [[ "$ARM_INDEX" -ge 2 ]]; then
+                # TODO: confirm this is agy'"'"'s real MCP-registration
+                # subcommand against `agy --help` — unverified, kept from
+                # the source branch (agy may not have a --scope local
+                # equivalent).
+                agy mcp add serena "serena start-mcp-server --context agy --project /workspace/repo" || true
+                SYSTEM_PROMPT+="Prefer Serena'"'"'s symbol-level tools (find_symbol, rename_symbol) over manual grep/read for navigation and edits. "
+            fi
+            if [[ "$ARM_INDEX" -ge 3 ]]; then
+                # TODO: confirm lean-ctx'"'"'s agy integration flag against
+                # `lean-ctx onboard --help` — unverified, kept from the
+                # source branch.
+                lean-ctx onboard --agent agy || true
+            fi
+            # No caveman equivalent wired for agy yet (index >= 4) — it'"'"'s
+            # a Claude Code plugin specifically, not a portable CLI tool.
+            # caveman arm under --agent agy currently just runs the leanctx
+            # arm'"'"'s wiring with nothing extra on top; that'"'"'s a real
+            # gap, not a silent bug — flagged here rather than faked.
+
+            AGY_EXTRA_ARGS=()
+
+            FULL_PROMPT="$(cat /tmp/task-prompt.txt)"
+            if [[ -n "$SYSTEM_PROMPT" ]]; then
+                FULL_PROMPT="$FULL_PROMPT
+
+System Instructions:
+$SYSTEM_PROMPT"
+            fi
+
+            agy -p "$FULL_PROMPT" \
+                --output-format json \
+                --dangerously-skip-permissions \
+                "${AGY_EXTRA_ARGS[@]}" \
+                > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
+
+            # Sync the generated transcripts back to the host so Agentsview
+            # can see them: to $MOUNT_DIR/transcripts for archiving
+            # alongside this arm+rep'"'"'s other results, and to the host'"'"'s
+            # native brain directory so Agentsview'"'"'s file-watcher picks
+            # them up immediately.
+            mkdir -p "$MOUNT_DIR/transcripts"
+            cp -r /tmp/agy_home/.gemini/antigravity-cli/brain/* "$MOUNT_DIR/transcripts/" 2>/dev/null || true
+            cp -r /tmp/agy_home/.gemini/antigravity-cli/brain/* "/tmp/host_agy_brain/" 2>/dev/null || true
+        fi
         # If a permission prompt still blocks here despite the flag above,
         # known issue on non-interactive first runs — see
         # anthropics/claude-code#52506. Fallback: --permission-mode bypassPermissions
@@ -323,7 +430,7 @@ docker compose run --rm \
         # files entirely, which would have dropped exactly the kind of thing
         # the pilot-3 run actually did (added a new test file).
         git add -A
-        git diff --cached > "/results/$ARM_REL/${TASK_ID}.patch" || true
+        git diff --cached > "$MOUNT_DIR/${TASK_ID}.patch" || true
     '
 DOCKER_EXIT=$?
 set -e
@@ -331,18 +438,18 @@ set -e
 RESULT_JSON="$RESULTS_DIR/${TASK_ID}.result.json"
 
 if [[ ! -f "$RESULT_JSON" ]]; then
-    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or claude likely crashed before producing output; see results/$ARM_REL/${TASK_ID}.stderr.log if present" >&2
+    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or agent likely crashed before producing output; see $FRIENDLY_DIR/${TASK_ID}.stderr.log if present" >&2
     exit 1
 fi
 
 if ! jq -e . "$RESULT_JSON" >/dev/null 2>&1; then
-    echo "result.json is not valid JSON — claude likely crashed mid-output; see results/$ARM_REL/${TASK_ID}.stderr.log" >&2
+    echo "result.json is not valid JSON — agent likely crashed mid-output; see $FRIENDLY_DIR/${TASK_ID}.stderr.log" >&2
     exit 1
 fi
 
 jq -n --arg task_id "$TASK_ID" --arg session_id "$SESSION_ID" --arg track "$TRACK" \
-      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" --argjson rep "$REP" \
-      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm, rep:$rep}' \
+      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" --argjson rep "$REP" --arg agent "$AGENT" \
+      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm, rep:$rep, agent:$agent}' \
       >> "$RESULTS_DIR/session-map.jsonl"
 
 IS_ERROR="$(jq -r '.is_error' "$RESULT_JSON")"
@@ -366,7 +473,7 @@ if [[ "$IS_ERROR" == "true" ]]; then
     exit 1
 fi
 
-echo "done: results/$ARM_REL/${TASK_ID}.result.json (patch: results/$ARM_REL/${TASK_ID}.patch, session: $SESSION_ID)"
+echo "done: $FRIENDLY_DIR/${TASK_ID}.result.json (patch: $FRIENDLY_DIR/${TASK_ID}.patch, session: $SESSION_ID)"
 
 # TODO before real runs:
 # - scoring (test_patch application + pass/fail) is handled by

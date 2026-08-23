@@ -6,15 +6,26 @@
 # -p --output-format json` output captured by run-task.sh) rather than
 # re-deriving anything.
 #
-# Usage: scripts/compare-arms.sh <task_id> [--rep <n>]
+# Usage: scripts/compare-arms.sh [--agent <claude|agy>] <task_id> [--rep <n>]
 # --rep selects which repeat's results to compare (default 1); see
-# scripts/run-task.sh's --rep.
+# scripts/run-task.sh's --rep. --agent selects which agent's results tree
+# (results/ vs results-agy/) to read from (default claude).
 # Requires: jq
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+AGENT="claude"
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --agent) AGENT="$2"; shift 2 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]}"
 
 TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
 shift
@@ -34,6 +45,12 @@ fi
 # Same arm list/order as scripts/run-task.sh's --arm values, cumulative.
 ARMS=(baseline graphify serena leanctx caveman)
 
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_BASE="$REPO_ROOT/results"
+else
+    RESULTS_BASE="$REPO_ROOT/results-agy"
+fi
+
 FOUND=0
 ROWS=()
 ARM_REL_SUFFIX=""
@@ -41,7 +58,7 @@ if [[ "$REP" -gt 1 ]]; then
     ARM_REL_SUFFIX="/rep$REP"
 fi
 for ARM in "${ARMS[@]}"; do
-    RESULT_JSON="$REPO_ROOT/results/$ARM$ARM_REL_SUFFIX/${TASK_ID}.result.json"
+    RESULT_JSON="$RESULTS_BASE/$ARM$ARM_REL_SUFFIX/${TASK_ID}.result.json"
     [[ -f "$RESULT_JSON" ]] || continue
     FOUND=1
     ROWS+=("$(jq -c --arg arm "$ARM" \
@@ -50,7 +67,7 @@ for ARM in "${ARMS[@]}"; do
 done
 
 if [[ "$FOUND" -eq 0 ]]; then
-    echo "no results found for $TASK_ID under any of: ${ARMS[*]} (looked under results/<arm>${ARM_REL_SUFFIX}/${TASK_ID}.result.json)" >&2
+    echo "no results found for $TASK_ID under any of: ${ARMS[*]} (looked under $(basename "$RESULTS_BASE")/<arm>${ARM_REL_SUFFIX}/${TASK_ID}.result.json)" >&2
     exit 1
 fi
 

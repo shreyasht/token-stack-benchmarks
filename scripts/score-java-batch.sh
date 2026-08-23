@@ -24,10 +24,12 @@
 # run_evaluation --mode evaluation and produced a final_report.json
 # (unresolved — correct outcome for that patch, not a script bug).
 #
-# Usage: scripts/score-java-batch.sh [--arm <name>] [--rep <n>] [task_id ...]   # default: baseline arm, rep 1, every attempted java task
-# --arm selects which ablation arm's results/<arm>/ dir to score — see
+# Usage: scripts/score-java-batch.sh [--arm <name>] [--rep <n>] [--agent <claude|agy>] [task_id ...]   # default: baseline arm, rep 1, claude, every attempted java task
+# --arm selects which ablation arm's results dir to score — see
 # scripts/run-task.sh's header for the arm list. Defaults to baseline.
 # --rep selects which repeat to score (default 1); see run-task.sh's --rep.
+# --agent selects which agent's results tree (results/ vs results-agy/) to
+# score (default claude); see run-task.sh's --agent.
 # Requires: multi-swe-bench (not on PyPI — git clone + `make install` from
 # https://github.com/multi-swe-bench/multi-swe-bench), jq, Docker
 
@@ -40,23 +42,30 @@ RAW_DATASET_DIR="$REPO_ROOT/tasks/raw/multi-swe-bench-java"
 
 ARM="baseline"
 REP=1
+AGENT="claude"
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
+        --agent) AGENT="$2"; shift 2 ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
 set -- "${ARGS[@]}"
 
-# rep 1 stays at results/<arm>/ (matches scripts/run-task.sh's default,
-# no migration needed); rep N>1 reads results/<arm>/repN/ instead.
+# rep 1 stays at <results-dir>/<arm>/ (matches scripts/run-task.sh's
+# default, no migration needed); rep N>1 reads <results-dir>/<arm>/repN/
+# instead. <results-dir> is results/ for claude, results-agy/ for agy.
 ARM_REL="$ARM"
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL="$ARM/rep$REP"
 fi
-RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
+if [[ "$AGENT" == "claude" ]]; then
+    RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
+else
+    RESULTS_DIR="$REPO_ROOT/results-agy/$ARM_REL"
+fi
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
@@ -115,7 +124,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
 done
 
 if [[ ${#SCORED_IDS[@]} -eq 0 ]]; then
-    echo "no attempted java-track tasks found under results/$ARM_REL/ — run scripts/run-batch.sh --track java --arm $ARM first" >&2
+    echo "no attempted java-track tasks found under $RESULTS_DIR/ — run scripts/run-batch.sh --track java --arm $ARM first" >&2
     exit 1
 fi
 
@@ -124,7 +133,7 @@ OUTPUT_DIR="$RESULTS_DIR/java-scores"
 LOG_DIR="$RESULTS_DIR/java-scores-logs"
 mkdir -p "$REPO_DIR" "$OUTPUT_DIR" "$LOG_DIR"
 
-echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM) against tasks/raw/multi-swe-bench-java/*.jsonl"
+echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM rep=$REP agent=$AGENT) against tasks/raw/multi-swe-bench-java/*.jsonl"
 
 python3 -m multi_swe_bench.harness.run_evaluation \
     --mode evaluation \
