@@ -405,9 +405,14 @@ System Instructions:
 $SYSTEM_PROMPT"
             fi
 
+            # --mode accept-edits: confirmed via `agy --help` on EC2 — default
+            # mode is plan (analyze/explain only, no file writes), which is
+            # what silently produced an empty patch + num_turns:1 the first
+            # time this ran without it.
             agy -p "$FULL_PROMPT" \
                 --output-format json \
                 --dangerously-skip-permissions \
+                --mode accept-edits \
                 "${AGY_EXTRA_ARGS[@]}" \
                 > "$MOUNT_DIR/${TASK_ID}.result.json" 2> "$MOUNT_DIR/${TASK_ID}.stderr.log" || true
 
