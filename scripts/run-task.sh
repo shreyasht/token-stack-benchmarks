@@ -7,8 +7,14 @@
 # real swebench / multi-swe-bench harnesses instead of reimplementing their
 # per-repo build/test logic.
 #
-# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>]
+# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>] [--rep <n>]
 # Requires: jq
+#
+# --rep selects which repeat of this arm to run (default 1), for
+# BENCHMARKING.md's >=3-repeats-per-arm requirement. rep 1 writes to
+# results/<arm>/ (unchanged, no migration needed for already-run rep-1
+# data); rep N>1 writes to results/<arm>/repN/ instead, so reps never
+# collide with each other or with rep 1.
 #
 # --arm selects which ablation arm to run, per BENCHMARKING.md's ablation
 # design. Cumulative — each arm includes every tool before it:
@@ -67,13 +73,20 @@ TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
 shift
 
 ARM="baseline"
+REP=1
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
+        --rep) REP="$2"; shift 2 ;;
         *) TASKS_FILE="$1"; shift ;;
     esac
 done
+
+if ! [[ "$REP" =~ ^[0-9]+$ ]] || [[ "$REP" -lt 1 ]]; then
+    echo "bad --rep '$REP' (want a positive integer)" >&2
+    exit 2
+fi
 
 case "$ARM" in
     baseline) ARM_INDEX=0 ;;
@@ -97,7 +110,13 @@ if [[ ! -f "$TASKS_FILE" ]]; then
     exit 2
 fi
 
-RESULTS_DIR="$REPO_ROOT/results/$ARM"
+# rep 1 stays at results/<arm>/ (backward compat, no migration for existing
+# data); rep N>1 gets its own results/<arm>/repN/ subdir.
+ARM_REL="$ARM"
+if [[ "$REP" -gt 1 ]]; then
+    ARM_REL="$ARM/rep$REP"
+fi
+RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
 
 # Resume-safety: running on subscription auth, not a metered API key, so a
 # batch that hits a usage cap gets picked up again later (e.g. "tomorrow")
@@ -108,7 +127,7 @@ RESULTS_DIR="$REPO_ROOT/results/$ARM"
 # Scoped per-arm so the same task_id can be (re-)run under a different arm
 # without the skip check hiding it.
 if [[ -f "$RESULTS_DIR/${TASK_ID}.result.json" ]]; then
-    echo "skip: results/$ARM/${TASK_ID}.result.json already exists"
+    echo "skip: results/$ARM_REL/${TASK_ID}.result.json already exists"
     exit 0
 fi
 
@@ -191,6 +210,7 @@ docker compose run --rm \
     -e BASE_COMMIT="$BASE_COMMIT" \
     -e SESSION_ID="$SESSION_ID" \
     -e ARM="$ARM" \
+    -e ARM_REL="$ARM_REL" \
     -e ARM_INDEX="$ARM_INDEX" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
     "${DOCKER_EXTRA_ARGS[@]}" \
@@ -199,7 +219,7 @@ docker compose run --rm \
         # docker-compose.yml mounts the whole host results/ dir at /results
         # — write under the arm subdir within it rather than remounting a
         # different host path, so this composes with that one static mount.
-        mkdir -p "/results/$ARM"
+        mkdir -p "/results/$ARM_REL"
 
         # Shallow fetch by exact commit SHA rather than a depth-limited
         # branch clone — guarantees the checked-out tree matches the task'"'"'s
@@ -292,7 +312,7 @@ docker compose run --rm \
             --output-format json \
             --dangerously-skip-permissions \
             "${CLAUDE_EXTRA_ARGS[@]}" \
-            > "/results/$ARM/${TASK_ID}.result.json" 2> "/results/$ARM/${TASK_ID}.stderr.log" || true
+            > "/results/$ARM_REL/${TASK_ID}.result.json" 2> "/results/$ARM_REL/${TASK_ID}.stderr.log" || true
         # If a permission prompt still blocks here despite the flag above,
         # known issue on non-interactive first runs — see
         # anthropics/claude-code#52506. Fallback: --permission-mode bypassPermissions
@@ -303,7 +323,7 @@ docker compose run --rm \
         # files entirely, which would have dropped exactly the kind of thing
         # the pilot-3 run actually did (added a new test file).
         git add -A
-        git diff --cached > "/results/$ARM/${TASK_ID}.patch" || true
+        git diff --cached > "/results/$ARM_REL/${TASK_ID}.patch" || true
     '
 DOCKER_EXIT=$?
 set -e
@@ -311,18 +331,18 @@ set -e
 RESULT_JSON="$RESULTS_DIR/${TASK_ID}.result.json"
 
 if [[ ! -f "$RESULT_JSON" ]]; then
-    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or claude likely crashed before producing output; see results/$ARM/${TASK_ID}.stderr.log if present" >&2
+    echo "no result.json produced (container exit $DOCKER_EXIT) — checkout or claude likely crashed before producing output; see results/$ARM_REL/${TASK_ID}.stderr.log if present" >&2
     exit 1
 fi
 
 if ! jq -e . "$RESULT_JSON" >/dev/null 2>&1; then
-    echo "result.json is not valid JSON — claude likely crashed mid-output; see results/$ARM/${TASK_ID}.stderr.log" >&2
+    echo "result.json is not valid JSON — claude likely crashed mid-output; see results/$ARM_REL/${TASK_ID}.stderr.log" >&2
     exit 1
 fi
 
 jq -n --arg task_id "$TASK_ID" --arg session_id "$SESSION_ID" --arg track "$TRACK" \
-      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" \
-      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm}' \
+      --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" --argjson rep "$REP" \
+      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm, rep:$rep}' \
       >> "$RESULTS_DIR/session-map.jsonl"
 
 IS_ERROR="$(jq -r '.is_error' "$RESULT_JSON")"
@@ -346,7 +366,7 @@ if [[ "$IS_ERROR" == "true" ]]; then
     exit 1
 fi
 
-echo "done: results/$ARM/${TASK_ID}.result.json (patch: results/$ARM/${TASK_ID}.patch, session: $SESSION_ID)"
+echo "done: results/$ARM_REL/${TASK_ID}.result.json (patch: results/$ARM_REL/${TASK_ID}.patch, session: $SESSION_ID)"
 
 # TODO before real runs:
 # - scoring (test_patch application + pass/fail) is handled by

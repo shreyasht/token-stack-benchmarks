@@ -6,7 +6,9 @@
 # -p --output-format json` output captured by run-task.sh) rather than
 # re-deriving anything.
 #
-# Usage: scripts/compare-arms.sh <task_id>
+# Usage: scripts/compare-arms.sh <task_id> [--rep <n>]
+# --rep selects which repeat's results to compare (default 1); see
+# scripts/run-task.sh's --rep.
 # Requires: jq
 
 set -euo pipefail
@@ -15,6 +17,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
+shift
+REP=1
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --rep) REP="$2"; shift 2 ;;
+        *) echo "unknown arg '$1'" >&2; exit 2 ;;
+    esac
+done
 
 if ! command -v jq >/dev/null; then
     echo "jq required (dnf install -y jq / apt-get install -y jq)" >&2
@@ -26,8 +36,12 @@ ARMS=(baseline graphify serena leanctx caveman)
 
 FOUND=0
 ROWS=()
+ARM_REL_SUFFIX=""
+if [[ "$REP" -gt 1 ]]; then
+    ARM_REL_SUFFIX="/rep$REP"
+fi
 for ARM in "${ARMS[@]}"; do
-    RESULT_JSON="$REPO_ROOT/results/$ARM/${TASK_ID}.result.json"
+    RESULT_JSON="$REPO_ROOT/results/$ARM$ARM_REL_SUFFIX/${TASK_ID}.result.json"
     [[ -f "$RESULT_JSON" ]] || continue
     FOUND=1
     ROWS+=("$(jq -c --arg arm "$ARM" \
@@ -36,7 +50,7 @@ for ARM in "${ARMS[@]}"; do
 done
 
 if [[ "$FOUND" -eq 0 ]]; then
-    echo "no results found for $TASK_ID under any of: ${ARMS[*]} (looked under results/<arm>/${TASK_ID}.result.json)" >&2
+    echo "no results found for $TASK_ID under any of: ${ARMS[*]} (looked under results/<arm>${ARM_REL_SUFFIX}/${TASK_ID}.result.json)" >&2
     exit 1
 fi
 
