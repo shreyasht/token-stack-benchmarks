@@ -7,14 +7,22 @@
 # per arm if you need resolved/unresolved too.
 #
 # Usage: scripts/run-and-compare.sh [--track java|python] [--repo org/name]
-#          [--limit N] [--arms arm1,arm2,...] [--agent <claude|agy>]
-#          [--model <model>] [--effort <level>] [task_id ...]
+#          [--limit N] [--tasks-file <path>] [--arms arm1,arm2,...]
+#          [--agent <claude|agy>] [--model <model>] [--effort <level>]
+#          [task_id ...]
 # --arms: comma-separated ablation arms to run, in order. First arm is the
 #   savings baseline, last arm is what it's compared against (default:
 #   baseline,caveman). See scripts/run-task.sh's header for valid arm names.
-# --limit N selects the first N matching task_ids from tasks/tasks.json
-#   (same selection as scripts/run-batch.sh) when no task_id is given
-#   positionally. Give explicit task_id(s) instead to run exactly those.
+# --tasks-file selects which task_id list to draw from (default:
+#   tasks/tasks.json). Use a curated subset file (same {tasks:[...]} schema,
+#   e.g. a stratified sample) to run a cheap slice instead of everything —
+#   the individual task lookups downstream still use tasks/tasks.json (the
+#   subset file only needs the task_id field to select from it), so any
+#   subset drawn straight from tasks.json works with no extra plumbing.
+# --limit N selects the first N matching task_ids from --tasks-file (same
+#   selection as scripts/run-batch.sh) when no task_id is given positionally
+#   — with no --limit, every task_id in --tasks-file is selected. Give
+#   explicit task_id(s) instead to run exactly those.
 # --model/--effort forwarded to scripts/run-task.sh as-is (see its header).
 # Reruns are cheap: scripts/run-task.sh skips any arm+task already run.
 # Requires: jq
@@ -38,6 +46,7 @@ while [[ $# -gt 0 ]]; do
         --track) TRACK_FILTER="$2"; shift 2 ;;
         --repo) REPO_FILTER="$2"; shift 2 ;;
         --limit) LIMIT="$2"; shift 2 ;;
+        --tasks-file) TASKS_FILE="$2"; shift 2 ;;
         --arms) ARMS_CSV="$2"; shift 2 ;;
         --agent) AGENT="$2"; shift 2 ;;
         --model) MODEL="$2"; shift 2 ;;
@@ -77,11 +86,11 @@ else
 fi
 
 if [[ "${#TASK_IDS[@]}" -eq 0 ]]; then
-    echo "no tasks selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none})" >&2
+    echo "no tasks selected (tasks-file=$TASKS_FILE track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none})" >&2
     exit 2
 fi
 
-echo "run-and-compare: ${#TASK_IDS[@]} task(s), arms=${ARMS_CSV} agent=$AGENT model=${MODEL:-default} effort=${EFFORT:-default}"
+echo "run-and-compare: ${#TASK_IDS[@]} task(s) from $(basename "$TASKS_FILE"), arms=${ARMS_CSV} agent=$AGENT model=${MODEL:-default} effort=${EFFORT:-default}"
 
 for TASK_ID in "${TASK_IDS[@]}"; do
     for ARM in "${ARMS[@]}"; do
