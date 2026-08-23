@@ -49,4 +49,11 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 RUN uv tool install serena-agent
 
 RUN curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/v2.1.0/install.sh | bash
-RUN curl -fsSL https://raw.githubusercontent.com/yvgude/lean-ctx/v3.9.19/install.sh | sh
+
+# LEAN_CTX_NO_ONBOARD=1 — without it, install.sh auto-runs `lean-ctx onboard`
+# (registers the MCP server + hooks with Claude Code) right here at build
+# time, baking it active into every arm regardless of $ARM_INDEX. Confirmed
+# via install.sh source: `finish()` runs onboard unless this env var is set.
+# run-task.sh's own `lean-ctx onboard` call (ARM_INDEX >= 3) is the only
+# place onboarding should happen.
+RUN curl -fsSL https://raw.githubusercontent.com/yvgude/lean-ctx/v3.9.19/install.sh | LEAN_CTX_NO_ONBOARD=1 sh
