@@ -6,10 +6,13 @@
 # -p --output-format json` output captured by run-task.sh) rather than
 # re-deriving anything.
 #
-# Usage: scripts/compare-arms.sh [--agent <claude|agy>] <task_id> [--rep <n>]
+# Usage: scripts/compare-arms.sh [--agent <claude|agy>] <task_id> [--rep <n>] [--model <model>] [--effort <level>]
 # --rep selects which repeat's results to compare (default 1); see
 # scripts/run-task.sh's --rep. --agent selects which agent's results tree
-# (results/ vs results-agy/) to read from (default claude).
+# (results/ vs results-agy/) to read from (default claude). --model/--effort
+# select the same non-default model-<model>[-effort-<level>]/ subdir
+# scripts/run-task.sh wrote to (default: unset, i.e. the CLI's own default
+# model/effort, at the unsuffixed path).
 # Requires: jq
 
 set -euo pipefail
@@ -30,9 +33,13 @@ set -- "${ARGS[@]}"
 TASK_ID="${1:?task id (task_id field in tasks/tasks.json)}"
 shift
 REP=1
+MODEL=""
+EFFORT=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --rep) REP="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --effort) EFFORT="$2"; shift 2 ;;
         *) echo "unknown arg '$1'" >&2; exit 2 ;;
     esac
 done
@@ -56,6 +63,17 @@ ROWS=()
 ARM_REL_SUFFIX=""
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL_SUFFIX="/rep$REP"
+fi
+if [[ -n "$MODEL" || -n "$EFFORT" ]]; then
+    MODEL_SEGMENT=""
+    if [[ -n "$MODEL" ]]; then
+        MODEL_SLUG="$(tr '/:' '--' <<<"$MODEL")"
+        MODEL_SEGMENT="model-$MODEL_SLUG"
+    fi
+    if [[ -n "$EFFORT" ]]; then
+        MODEL_SEGMENT="${MODEL_SEGMENT:+$MODEL_SEGMENT-}effort-$EFFORT"
+    fi
+    ARM_REL_SUFFIX="$ARM_REL_SUFFIX/$MODEL_SEGMENT"
 fi
 for ARM in "${ARMS[@]}"; do
     RESULT_JSON="$RESULTS_BASE/$ARM$ARM_REL_SUFFIX/${TASK_ID}.result.json"

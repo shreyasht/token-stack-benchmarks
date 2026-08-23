@@ -22,12 +22,14 @@
 # end on a real Docker host: astropy__astropy-12907 ran clean through
 # run_evaluation and reported resolved.
 #
-# Usage: scripts/score-python-batch.sh [--arm <name>] [--rep <n>] [--agent <claude|agy>] [task_id ...]   # default: baseline arm, rep 1, claude, every attempted python task
+# Usage: scripts/score-python-batch.sh [--arm <name>] [--rep <n>] [--agent <claude|agy>] [--model <model>] [--effort <level>] [task_id ...]   # default: baseline arm, rep 1, claude, CLI-default model/effort, every attempted python task
 # --arm selects which ablation arm's results dir to score — see
 # scripts/run-task.sh's header for the arm list. Defaults to baseline.
 # --rep selects which repeat to score (default 1); see run-task.sh's --rep.
 # --agent selects which agent's results tree (results/ vs results-agy/) to
-# score (default claude); see run-task.sh's --agent.
+# score (default claude); see run-task.sh's --agent. --model/--effort select
+# the same non-default model-<model>[-effort-<level>]/ subdir run-task.sh
+# wrote to (default: unset, i.e. the unsuffixed default-model path).
 # Requires: pip install swebench, jq, Docker
 
 set -euo pipefail
@@ -40,12 +42,16 @@ DATASET_NAME="SWE-bench/SWE-bench_Verified"   # NOT princeton-nlp — that mirro
 ARM="baseline"
 REP=1
 AGENT="claude"
+MODEL=""
+EFFORT=""
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
         --agent) AGENT="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --effort) EFFORT="$2"; shift 2 ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
@@ -57,6 +63,17 @@ set -- "${ARGS[@]}"
 ARM_REL="$ARM"
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL="$ARM/rep$REP"
+fi
+if [[ -n "$MODEL" || -n "$EFFORT" ]]; then
+    MODEL_SEGMENT=""
+    if [[ -n "$MODEL" ]]; then
+        MODEL_SLUG="$(tr '/:' '--' <<<"$MODEL")"
+        MODEL_SEGMENT="model-$MODEL_SLUG"
+    fi
+    if [[ -n "$EFFORT" ]]; then
+        MODEL_SEGMENT="${MODEL_SEGMENT:+$MODEL_SEGMENT-}effort-$EFFORT"
+    fi
+    ARM_REL="$ARM_REL/$MODEL_SEGMENT"
 fi
 if [[ "$AGENT" == "claude" ]]; then
     RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
@@ -121,7 +138,7 @@ RUN_ID="score-$(date +%Y%m%d-%H%M%S)"
 REPORT_DIR="$RESULTS_DIR/python-scores"
 mkdir -p "$REPORT_DIR"
 
-echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM rep=$REP agent=$AGENT) against $DATASET_NAME, run_id=$RUN_ID"
+echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM rep=$REP agent=$AGENT model=${MODEL:-default} effort=${EFFORT:-default}) against $DATASET_NAME, run_id=$RUN_ID"
 
 python3 -m swebench.harness.run_evaluation \
     --dataset_name "$DATASET_NAME" \

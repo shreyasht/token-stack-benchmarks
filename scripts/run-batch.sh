@@ -6,12 +6,13 @@
 # (exit 1) don't stop the batch — one broken checkout or one bad agent run
 # shouldn't cost you the rest of the sample.
 #
-# Usage: scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N] [--arm <name>] [--rep <n>] [--agent <claude|agy>]
+# Usage: scripts/run-batch.sh [--track java|python] [--repo org/name] [--limit N] [--arm <name>] [--rep <n>] [--agent <claude|agy>] [--model <model>] [--effort <level>]
 # Requires: jq
-# --arm, --rep, and --agent are forwarded as-is to scripts/run-task.sh — see
-# that script's header for the arm list (baseline|graphify|serena|leanctx|
-# caveman), the repeat-numbering scheme, and the agent choice. Default to
-# baseline / rep 1 / claude there if omitted.
+# --arm, --rep, --agent, --model, and --effort are forwarded as-is to
+# scripts/run-task.sh — see that script's header for the arm list
+# (baseline|graphify|serena|leanctx|caveman), the repeat-numbering scheme,
+# the agent choice, and model/effort overrides. Default to baseline / rep 1 /
+# claude / CLI-default model+effort there if omitted.
 
 set -euo pipefail
 
@@ -25,6 +26,8 @@ LIMIT=""
 ARM="baseline"
 REP=1
 AGENT="claude"
+MODEL=""
+EFFORT=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -34,6 +37,8 @@ while [[ $# -gt 0 ]]; do
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
         --agent) AGENT="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --effort) EFFORT="$2"; shift 2 ;;
         *) echo "unknown arg: $1" >&2; exit 2 ;;
     esac
 done
@@ -59,7 +64,7 @@ if [[ -n "$LIMIT" ]]; then
     TASK_IDS=("${TASK_IDS[@]:0:$LIMIT}")
 fi
 
-echo "batch: ${#TASK_IDS[@]} task(s) selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none} arm=$ARM rep=$REP agent=$AGENT)"
+echo "batch: ${#TASK_IDS[@]} task(s) selected (track=${TRACK_FILTER:-any} repo=${REPO_FILTER:-any} limit=${LIMIT:-none} arm=$ARM rep=$REP agent=$AGENT model=${MODEL:-default} effort=${EFFORT:-default})"
 
 DONE=0
 SKIPPED=0
@@ -72,7 +77,7 @@ for TASK_ID in "${TASK_IDS[@]}"; do
     # real (possibly hours-long) batch, while OUTPUT captures it to tell a
     # resume-skip apart from a fresh completion for the summary counts below.
     set +e
-    OUTPUT="$("$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" --rep "$REP" --agent "$AGENT" 2>&1 | tee /dev/stderr)"
+    OUTPUT="$("$SCRIPT_DIR/run-task.sh" "$TASK_ID" --arm "$ARM" --rep "$REP" --agent "$AGENT" --model "$MODEL" --effort "$EFFORT" 2>&1 | tee /dev/stderr)"
     RC=${PIPESTATUS[0]}
     set -e
 

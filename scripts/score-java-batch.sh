@@ -24,12 +24,14 @@
 # run_evaluation --mode evaluation and produced a final_report.json
 # (unresolved — correct outcome for that patch, not a script bug).
 #
-# Usage: scripts/score-java-batch.sh [--arm <name>] [--rep <n>] [--agent <claude|agy>] [task_id ...]   # default: baseline arm, rep 1, claude, every attempted java task
+# Usage: scripts/score-java-batch.sh [--arm <name>] [--rep <n>] [--agent <claude|agy>] [--model <model>] [--effort <level>] [task_id ...]   # default: baseline arm, rep 1, claude, CLI-default model/effort, every attempted java task
 # --arm selects which ablation arm's results dir to score — see
 # scripts/run-task.sh's header for the arm list. Defaults to baseline.
 # --rep selects which repeat to score (default 1); see run-task.sh's --rep.
 # --agent selects which agent's results tree (results/ vs results-agy/) to
-# score (default claude); see run-task.sh's --agent.
+# score (default claude); see run-task.sh's --agent. --model/--effort select
+# the same non-default model-<model>[-effort-<level>]/ subdir run-task.sh
+# wrote to (default: unset, i.e. the unsuffixed default-model path).
 # Requires: multi-swe-bench (not on PyPI — git clone + `make install` from
 # https://github.com/multi-swe-bench/multi-swe-bench), jq, Docker
 
@@ -43,12 +45,16 @@ RAW_DATASET_DIR="$REPO_ROOT/tasks/raw/multi-swe-bench-java"
 ARM="baseline"
 REP=1
 AGENT="claude"
+MODEL=""
+EFFORT=""
 ARGS=()
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
         --agent) AGENT="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --effort) EFFORT="$2"; shift 2 ;;
         *) ARGS+=("$1"); shift ;;
     esac
 done
@@ -60,6 +66,17 @@ set -- "${ARGS[@]}"
 ARM_REL="$ARM"
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL="$ARM/rep$REP"
+fi
+if [[ -n "$MODEL" || -n "$EFFORT" ]]; then
+    MODEL_SEGMENT=""
+    if [[ -n "$MODEL" ]]; then
+        MODEL_SLUG="$(tr '/:' '--' <<<"$MODEL")"
+        MODEL_SEGMENT="model-$MODEL_SLUG"
+    fi
+    if [[ -n "$EFFORT" ]]; then
+        MODEL_SEGMENT="${MODEL_SEGMENT:+$MODEL_SEGMENT-}effort-$EFFORT"
+    fi
+    ARM_REL="$ARM_REL/$MODEL_SEGMENT"
 fi
 if [[ "$AGENT" == "claude" ]]; then
     RESULTS_DIR="$REPO_ROOT/results/$ARM_REL"
@@ -133,7 +150,7 @@ OUTPUT_DIR="$RESULTS_DIR/java-scores"
 LOG_DIR="$RESULTS_DIR/java-scores-logs"
 mkdir -p "$REPO_DIR" "$OUTPUT_DIR" "$LOG_DIR"
 
-echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM rep=$REP agent=$AGENT) against tasks/raw/multi-swe-bench-java/*.jsonl"
+echo "scoring ${#SCORED_IDS[@]} task(s) (arm=$ARM rep=$REP agent=$AGENT model=${MODEL:-default} effort=${EFFORT:-default}) against tasks/raw/multi-swe-bench-java/*.jsonl"
 
 python3 -m multi_swe_bench.harness.run_evaluation \
     --mode evaluation \

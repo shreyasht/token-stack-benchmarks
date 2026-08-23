@@ -7,8 +7,18 @@
 # real swebench / multi-swe-bench harnesses instead of reimplementing their
 # per-repo build/test logic.
 #
-# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>] [--rep <n>] [--agent <claude|agy>]
+# Usage: scripts/run-task.sh <task-id> [tasks-file] [--arm <name>] [--rep <n>] [--agent <claude|agy>] [--model <model>] [--effort <level>]
 # Requires: jq
+#
+# --model overrides the agent CLI's default model (claude: alias like
+# 'sonnet'/'opus'/'fable' or a full name like 'claude-haiku-4-5-20251001';
+# agy: whatever `agy models` lists). --effort sets reasoning effort (claude:
+# low|medium|high|xhigh|max; agy: low|medium|high — narrower, unvalidated
+# here, the CLI itself rejects a bad value). Both default to the CLI's own
+# built-in default when omitted (unchanged behavior). When either is set,
+# results land one level deeper — <results-dir>/<arm>[/repN]/model-<model>
+# [-effort-<level>]/ — so a non-default run never collides with (or silently
+# skips past) the default-model data at the unsuffixed path.
 #
 # --rep selects which repeat of this arm to run (default 1), for
 # BENCHMARKING.md's >=3-repeats-per-arm requirement. rep 1 writes to
@@ -84,12 +94,16 @@ shift
 ARM="baseline"
 REP=1
 AGENT="claude"
+MODEL=""
+EFFORT=""
 TASKS_FILE="$REPO_ROOT/tasks/tasks.json"
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --arm) ARM="$2"; shift 2 ;;
         --rep) REP="$2"; shift 2 ;;
         --agent) AGENT="$2"; shift 2 ;;
+        --model) MODEL="$2"; shift 2 ;;
+        --effort) EFFORT="$2"; shift 2 ;;
         *) TASKS_FILE="$1"; shift ;;
     esac
 done
@@ -134,6 +148,20 @@ fi
 ARM_REL="$ARM"
 if [[ "$REP" -gt 1 ]]; then
     ARM_REL="$ARM/rep$REP"
+fi
+# Non-default model/effort get their own path segment, sanitized (bedrock
+# model IDs can contain ':' or '/') so a haiku (or any non-default) run never
+# collides with, or is skipped as already-done by, the default-model path.
+if [[ -n "$MODEL" || -n "$EFFORT" ]]; then
+    MODEL_SEGMENT=""
+    if [[ -n "$MODEL" ]]; then
+        MODEL_SLUG="$(tr '/:' '--' <<<"$MODEL")"
+        MODEL_SEGMENT="model-$MODEL_SLUG"
+    fi
+    if [[ -n "$EFFORT" ]]; then
+        MODEL_SEGMENT="${MODEL_SEGMENT:+$MODEL_SEGMENT-}effort-$EFFORT"
+    fi
+    ARM_REL="$ARM_REL/$MODEL_SEGMENT"
 fi
 if [[ "$AGENT" == "claude" ]]; then
     RESULTS_BASE_NAME="results"
@@ -243,6 +271,8 @@ docker compose run --rm \
     -e ARM="$ARM" \
     -e ARM_INDEX="$ARM_INDEX" \
     -e AGENT="$AGENT" \
+    -e MODEL="$MODEL" \
+    -e EFFORT="$EFFORT" \
     -e MOUNT_DIR="$MOUNT_DIR" \
     -v "$(realpath "$PROMPT_FILE"):/tmp/task-prompt.txt:ro" \
     "${DOCKER_EXTRA_ARGS[@]}" \
@@ -337,7 +367,13 @@ docker compose run --rm \
             # expansion.
             CLAUDE_EXTRA_ARGS=()
             if [[ -n "$SYSTEM_PROMPT" ]]; then
-                CLAUDE_EXTRA_ARGS=(--append-system-prompt "$SYSTEM_PROMPT")
+                CLAUDE_EXTRA_ARGS+=(--append-system-prompt "$SYSTEM_PROMPT")
+            fi
+            if [[ -n "$MODEL" ]]; then
+                CLAUDE_EXTRA_ARGS+=(--model "$MODEL")
+            fi
+            if [[ -n "$EFFORT" ]]; then
+                CLAUDE_EXTRA_ARGS+=(--effort "$EFFORT")
             fi
 
             # claude itself is allowed to fail/error here (set +e-equivalent
@@ -396,6 +432,12 @@ docker compose run --rm \
             # gap, not a silent bug — flagged here rather than faked.
 
             AGY_EXTRA_ARGS=()
+            if [[ -n "$MODEL" ]]; then
+                AGY_EXTRA_ARGS+=(--model "$MODEL")
+            fi
+            if [[ -n "$EFFORT" ]]; then
+                AGY_EXTRA_ARGS+=(--effort "$EFFORT")
+            fi
 
             FULL_PROMPT="$(cat /tmp/task-prompt.txt)"
             if [[ -n "$SYSTEM_PROMPT" ]]; then
@@ -454,7 +496,8 @@ fi
 
 jq -n --arg task_id "$TASK_ID" --arg session_id "$SESSION_ID" --arg track "$TRACK" \
       --arg repo "$REPO" --arg base_commit "$BASE_COMMIT" --arg arm "$ARM" --argjson rep "$REP" --arg agent "$AGENT" \
-      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm, rep:$rep, agent:$agent}' \
+      --arg model "$MODEL" --arg effort "$EFFORT" \
+      '{task_id:$task_id, session_id:$session_id, track:$track, repo:$repo, base_commit:$base_commit, arm:$arm, rep:$rep, agent:$agent, model:$model, effort:$effort}' \
       >> "$RESULTS_DIR/session-map.jsonl"
 
 IS_ERROR="$(jq -r '.is_error' "$RESULT_JSON")"
