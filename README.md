@@ -276,14 +276,22 @@ Neither track has run a full batch yet.
 
 ## Status
 
+Update (2026-08-25): a real 2-arm pilot (baseline vs. full stack, `claude-haiku-4-5`)
+ran on this harness — 11 of 31 sample task pairs completed, both run and scored
+(SWE-bench / Multi-SWE-bench) — before being stopped on cost grounds. Full writeup,
+numbers, and the open questions left behind: see
+[the postmortem](https://shreyasht.github.io/token-optimization-stack/) and
+`token-optimization-stack/BENCHMARKING.md`. The full 5-arm × 3-repeat matrix has not
+been run.
+
+Everything below this line describes the infrastructure itself and predates that
+pilot — kept for setup/architecture reference.
+
 Infrastructure scaffold, task sampling, task running, and scoring wiring are
 all in place and confirmed working end to end for both tracks (one task_id
 each, real Docker host, real verdicts). Ablation-arm registration commands
-are confirmed live against the real EC2 install (see "Ablation arms" above)
-but no arm has actually been run end to end yet — that's the next step. No
-full batch run yet (the pilot in `results/README.md` predates the scoring
-harness and was checked informally against a reference PR instead). Once a
-real batch runs — agent + scoring both — results get written up in
+are confirmed live against the real EC2 install (see "Ablation arms" above).
+Once a fuller batch runs — agent + scoring both — results get written up in
 `token-optimization-stack/BENCHMARKING.md`, not here.
 
 If you have pre-existing results from before `--arm` support (a flat
