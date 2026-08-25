@@ -12,4 +12,5 @@ results-agy/**/*.patch
 results-agy/**/*-scores/
 !results-agy/.gitkeep
 graph-cache/
+logs/
 .env
